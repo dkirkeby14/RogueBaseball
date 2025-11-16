@@ -21,6 +21,30 @@ function rarityIndex(name) {
   const idx = RARITIES.indexOf(name);
   return idx === -1 ? 0 : idx;
 }
+function computeOverall(player) {
+  const attrs = [
+    "velocity",
+    "movement",
+    "control",
+    "stamina",
+    "contact",
+    "power",
+    "eye",
+    "speed",
+    "fielding"
+  ];
+  let sum = 0;
+  let count = 0;
+  attrs.forEach(a => {
+    if (typeof player[a] === "number") {
+      sum += player[a];
+      count++;
+    }
+  });
+  if (count === 0) return 60;
+  return Math.round(sum / count);
+}
+
 
 // NEW: Overall rating helper (used everywhere for OVR)
 function calculateOVR(player) {
@@ -44,6 +68,7 @@ function calculateOVR(player) {
 ================================= */
 
 function makeNewPlayer(name, position, handedness, hair, skin, facial, teamColor) {
+  // base helper to bias towards mid-60s / 70s
   function base(min, max) {
     return clampAttr(randInt(min, max));
   }
@@ -53,6 +78,7 @@ function makeNewPlayer(name, position, handedness, hair, skin, facial, teamColor
     name: name || "Player",
     position: position || "P",
     handedness: handedness || "R",
+    // we'll add separate bat/throw hands later if needed
     hair: hair || "short",
     skin: skin || "#f1c27d",
     facial: facial || "none",
@@ -82,17 +108,22 @@ function makeNewPlayer(name, position, handedness, hair, skin, facial, teamColor
       curveball: base(55, 78),
       changeup: base(55, 78)
     },
-    perksApplied: {},
+    perksApplied: {},   // stat -> amount from perks (additive)
     perksOwned: []
   };
 
+  // Initialize perk overlays
   ["velocity", "movement", "control", "stamina",
    "contact", "power", "eye", "speed", "fielding"].forEach(attr => {
     p.perksApplied[attr] = 0;
   });
 
+  // compute overall (average of 9 attributes)
+  p.overall = computeOverall(p);
+
   return p;
 }
+
 
 function getEffectiveAttribute(player, attr) {
   const base = player[attr] || 0;
@@ -647,15 +678,11 @@ class TitleScene extends Phaser.Scene {
 
 /* ---------- NEW ProfileScene ---------- */
 
+/* ---------- ProfileScene (Save Slots) ---------- */
 class ProfileScene extends Phaser.Scene {
   constructor() {
     super({ key: "ProfileScene" });
-    this.players = [];
-    this.generator = null;
-    this.slotContainers = [];
-    this.popupRoot = null;
-    this.tempCreateData = null;
-    this.previewSprite = null;
+    this.slots = [null, null, null];
   }
 
   create() {
@@ -663,627 +690,708 @@ class ProfileScene extends Phaser.Scene {
     const h = this.cameras.main.height;
 
     this.add.rectangle(0, 0, w * 2, h * 2, 0x0b2430).setOrigin(0);
-    this.add.text(w / 2, 40, "Select / Create Player", {
-      font: "26px monospace",
+    this.add.text(w / 2, 40, "Select Profile", {
+      font: "28px monospace",
       fill: "#ffffff"
     }).setOrigin(0.5);
-
-    this.generator = new PixelPlayerGenerator(this);
 
     this.loadPlayers();
     this.renderSlots();
 
-    this.events.on("shutdown", () => this.cleanupDOM());
-    this.events.on("destroy", () => this.cleanupDOM());
+    const backHint = this.add.text(w / 2, h - 30, "Click a slot to play / create", {
+      font: "16px monospace",
+      fill: "#d0f0ff"
+    }).setOrigin(0.5);
   }
-
-  /* ----- load/save ----- */
 
   loadPlayers() {
     try {
-      this.players = JSON.parse(localStorage.getItem("players") || "[]");
+      const arr = JSON.parse(localStorage.getItem("players") || "[]");
+      this.slots = [arr[0] || null, arr[1] || null, arr[2] || null];
     } catch (e) {
-      this.players = [];
-    }
-    if (!Array.isArray(this.players)) this.players = [];
-    if (this.players.length > 3) {
-      this.players = this.players.slice(0, 3);
-      localStorage.setItem("players", JSON.stringify(this.players));
+      this.slots = [null, null, null];
     }
   }
 
   savePlayers() {
-    localStorage.setItem("players", JSON.stringify(this.players));
+    localStorage.setItem("players", JSON.stringify(this.slots));
   }
-
-  cleanupDOM() {
-    const oldPopup = document.getElementById("profile-popup-root");
-    if (oldPopup) oldPopup.remove();
-  }
-
-  /* ----- slot render ----- */
 
   renderSlots() {
-    if (this.slotContainers) {
-      this.slotContainers.forEach(c => c.destroy());
-    }
-    this.slotContainers = [];
+    if (this.slotContainer) this.slotContainer.destroy();
+    this.slotContainer = this.add.container(0, 0);
 
-    const totalWidth = 3 * 260 + 2 * 40; // card width + gaps
-    const startX = (GAME_WIDTH - totalWidth) / 2;
-    const slotWidth = 260;
-    const gap = 40;
+    const w = this.cameras.main.width;
+    const startY = 120;
+    const gapY = 130;
 
     for (let i = 0; i < 3; i++) {
-      const x = startX + i * (slotWidth + gap);
-      const y = 120;
-      const container = this.add.container(0, 0);
-      this.slotContainers.push(container);
+      const x = w / 2 - 250;
+      const y = startY + i * gapY;
+      const slotRect = this.add.rectangle(x, y, 500, 110, 0x000000, 0.7)
+        .setOrigin(0, 0)
+        .setStrokeStyle(2, 0xffffff)
+        .setInteractive();
 
-      const bg = this.add.rectangle(
-        x,
-        y,
-        slotWidth,
-        240,
-        0x000000,
-        0.7
-      ).setOrigin(0);
+      const slotIndex = i;
+      const player = this.slots[slotIndex];
 
-      this.addSlotContent(container, bg, i);
-      container.add(bg);
-    }
-  }
+      if (player) {
+        const label = `${player.name}  |  POS: ${player.position || "P"}  |  OVR: ${player.overall || computeOverall(player)}`;
+        const txt = this.add.text(x + 16, y + 14, label, {
+          font: "18px monospace",
+          fill: "#ffffff"
+        });
 
-  addSlotContent(container, bgRect, index) {
-    const slotPlayer = this.players[index];
+        const lvlText = this.add.text(x + 16, y + 42, `Level: ${player.level || 1}   Coins: ${player.currency || 0}`, {
+          font: "14px monospace",
+          fill: "#d0f0ff"
+        });
 
-    if (!slotPlayer) {
-      const cx = bgRect.x + bgRect.width / 2;
-      const cy = bgRect.y + bgRect.height / 2;
-      const plusBox = this.add.rectangle(
-        cx,
-        cy,
-        140,
-        140,
-        0x333333,
-        0.7
-      ).setOrigin(0.5).setInteractive();
+        const playBtn = this.makeButton(x + 16, y + 70, "Play", () => {
+          localStorage.setItem("currentPlayer", JSON.stringify(player));
+          this.scene.start("GameScene");
+        });
 
-      const plusText = this.add.text(cx, cy, "+", {
-        font: "60px monospace",
-        fill: "#bbbbbb"
-      }).setOrigin(0.5);
+        const deleteBtn = this.makeButton(x + 100, y + 70, "Delete", () => {
+          if (confirm("Delete this profile?")) {
+            this.slots[slotIndex] = null;
+            this.savePlayers();
+            this.renderSlots();
+          }
+        });
 
-      plusBox.on("pointerdown", () => {
-        this.startCreateFlow(index);
-      });
+        this.slotContainer.add(slotRect);
+        this.slotContainer.add(txt);
+        this.slotContainer.add(lvlText);
+        this.slotContainer.add(playBtn);
+        this.slotContainer.add(deleteBtn);
 
-      container.add(plusBox);
-      container.add(plusText);
-      return;
-    }
+        // small preview sprite on the right
+        const gen = new PixelPlayerGenerator(this);
+        const key = gen.generateCharacterTexture(player);
+        const animKeys = gen.makeAnimationKeysFor(key);
+        const sprite = this.add.sprite(x + 430, y + 55, key).setOrigin(0.5).setScale(2);
+        sprite.play(animKeys.idle);
+        this.slotContainer.add(sprite);
 
-    const cx = bgRect.x + bgRect.width / 2;
-    const keyCfg = {
-      ...slotPlayer,
-      role: slotPlayer.position === "P" ? "pitcher" : "batter"
-    };
-    const key = this.generator.generateCharacterTexture(keyCfg);
-    const animKeys = this.generator.makeAnimationKeysFor(key);
+      } else {
+        // empty slot
+        const plus = this.add.text(x + 220, y + 35, "+", {
+          font: "48px monospace",
+          fill: "#888888"
+        }).setOrigin(0.5);
 
-    const sprite = this.add.sprite(
-      cx,
-      bgRect.y + 120,
-      key
-    ).setOrigin(0.5, 0.9).setScale(3);
-    sprite.play(animKeys.idle);
+        const label = this.add.text(x + 16, y + 20, "Empty Slot - Click to Create", {
+          font: "18px monospace",
+          fill: "#cccccc"
+        });
 
-    const ovr = calculateOVR(slotPlayer);
+        slotRect.on("pointerdown", () => {
+          this.startCreatePlayer(slotIndex);
+        });
 
-    const nameText = this.add.text(
-      bgRect.x + 10,
-      bgRect.y + 10,
-      "Name: " + slotPlayer.name,
-      { font: "14px monospace", fill: "#ffffff" }
-    );
-    const posText = this.add.text(
-      bgRect.x + 10,
-      bgRect.y + 30,
-      "Pos: " + (slotPlayer.position || "P"),
-      { font: "14px monospace", fill: "#ffffff" }
-    );
-    const ovrText = this.add.text(
-      bgRect.x + 10,
-      bgRect.y + 50,
-      "OVR: " + ovr,
-      { font: "14px monospace", fill: "#ffff00" }
-    );
-
-    const selectBtn = this.add.text(
-      bgRect.x + 15,
-      bgRect.y + bgRect.height - 32,
-      "[ Select ]",
-      { font: "14px monospace", fill: "#00ff00", backgroundColor: "#000000", padding: { x: 4, y: 2 } }
-    ).setInteractive();
-
-    selectBtn.on("pointerdown", () => {
-      localStorage.setItem("currentPlayer", JSON.stringify(slotPlayer));
-      this.cleanupDOM();
-      this.scene.start("GameScene");
-    });
-
-    const deleteBtn = this.add.text(
-      bgRect.x + bgRect.width - 100,
-      bgRect.y + bgRect.height - 32,
-      "[ Delete ]",
-      { font: "14px monospace", fill: "#ff5555", backgroundColor: "#000000", padding: { x: 4, y: 2 } }
-    ).setInteractive();
-
-    deleteBtn.on("pointerdown", () => {
-      if (confirm("Delete this player?")) {
-        this.players.splice(index, 1);
-        this.savePlayers();
-        this.renderSlots();
+        this.slotContainer.add(slotRect);
+        this.slotContainer.add(plus);
+        this.slotContainer.add(label);
       }
-    });
-
-    container.add(sprite);
-    container.add(nameText);
-    container.add(posText);
-    container.add(ovrText);
-    container.add(selectBtn);
-    container.add(deleteBtn);
+    }
   }
 
-  /* ----- create flow entry ----- */
+  makeButton(x, y, text, onClick) {
+    const btn = this.add.text(x, y, text, {
+      font: "16px monospace",
+      fill: "#00ffff",
+      backgroundColor: "#000000",
+      padding: { x: 6, y: 4 }
+    }).setInteractive();
 
-  startCreateFlow(slotIndex) {
-    if (this.players.length >= 3 && !this.players[slotIndex]) {
-      alert("All 3 slots are filled. Delete one to create a new player.");
-      return;
-    }
-    this.tempCreateData = {
-      slotIndex,
-      name: "Player",
+    btn.on("pointerdown", () => {
+      onClick();
+    });
+
+    return btn;
+  }
+
+  startCreatePlayer(slotIndex) {
+    this.scene.start("CreatePlayerScene", { slotIndex: slotIndex });
+  }
+}
+/* ---------- CreatePlayerScene (3-step creator) ---------- */
+class CreatePlayerScene extends Phaser.Scene {
+  constructor() {
+    super({ key: "CreatePlayerScene" });
+    this.step = 1;
+  }
+
+  init(data) {
+    this.slotIndex = data && typeof data.slotIndex === "number" ? data.slotIndex : 0;
+
+    // base config
+    this.config = {
+      name: "New Player",
       position: "P",
       throwHand: "R",
       batHand: "R",
-      teamColor: "#2a6dd6",
       hair: "short",
-      hairColor: "#222222",
       facial: "none",
       skin: "#f1c27d",
-      stats: {}
-    };
-    this.showBasicInfoPopup();
-  }
-
-  showPopup(htmlContent) {
-    this.cleanupDOM();
-    const div = document.createElement("div");
-    div.id = "profile-popup-root";
-    div.style.position = "fixed";
-    div.style.left = "0";
-    div.style.top = "0";
-    div.style.width = "100%";
-    div.style.height = "100%";
-    div.style.background = "rgba(0,0,0,0.6)";
-    div.style.display = "flex";
-    div.style.alignItems = "center";
-    div.style.justifyContent = "center";
-    div.style.zIndex = "50";
-    div.style.fontFamily = "monospace";
-    div.innerHTML = htmlContent;
-    document.body.appendChild(div);
-    this.popupRoot = div;
-  }
-
-  /* ----- STEP 1: BASIC INFO ----- */
-
-  showBasicInfoPopup() {
-    const data = this.tempCreateData;
-    const html = `
-      <div style="background:#102030;padding:16px;border-radius:10px;color:#fff;min-width:320px;max-width:420px;">
-        <div style="font-size:18px;margin-bottom:8px;">Create Player — Step 1/3</div>
-        <div style="margin-bottom:6px;">
-          Name:
-          <input id="cp_name" value="${data.name}" style="width:180px;margin-left:4px;" />
-        </div>
-        <div style="margin-bottom:6px;">
-          Position:
-          <select id="cp_pos" style="margin-left:4px;">
-            <option value="P">P</option>
-            <option value="C">C</option>
-            <option value="1B">1B</option>
-            <option value="2B">2B</option>
-            <option value="3B">3B</option>
-            <option value="SS">SS</option>
-            <option value="LF">LF</option>
-            <option value="CF">CF</option>
-            <option value="RF">RF</option>
-          </select>
-        </div>
-        <div style="margin-bottom:6px;">
-          Throw Hand:
-          <select id="cp_throw" style="margin-left:4px;">
-            <option value="R">R</option>
-            <option value="L">L</option>
-          </select>
-        </div>
-        <div id="cp_bat_row" style="margin-bottom:6px;">
-          Bat Hand:
-          <select id="cp_bat" style="margin-left:4px;">
-            <option value="R">R</option>
-            <option value="L">L</option>
-          </select>
-        </div>
-        <div style="margin-bottom:6px;">
-          Team Color:
-          <input id="cp_team" type="color" value="${data.teamColor}" />
-        </div>
-        <div style="margin-top:10px;display:flex;justify-content:flex-end;gap:8px;">
-          <button id="cp_cancel" class="small-btn">Cancel</button>
-          <button id="cp_next" class="small-btn">Continue</button>
-        </div>
-      </div>
-    `;
-    this.showPopup(html);
-
-    const posSel = document.getElementById("cp_pos");
-    const batRow = document.getElementById("cp_bat_row");
-
-    posSel.value = data.position || "P";
-
-    const updateBatVisibility = () => {
-      const v = posSel.value;
-      batRow.style.display = (v === "P") ? "none" : "block";
-    };
-    updateBatVisibility();
-    posSel.onchange = updateBatVisibility;
-
-    document.getElementById("cp_throw").value = data.throwHand || "R";
-    document.getElementById("cp_team").value = data.teamColor || "#2a6dd6";
-
-    document.getElementById("cp_cancel").onclick = () => {
-      this.tempCreateData = null;
-      this.cleanupDOM();
+      teamColor: "#2a6dd6"
     };
 
-    document.getElementById("cp_next").onclick = () => {
-      data.name = document.getElementById("cp_name").value || "Player";
-      data.position = document.getElementById("cp_pos").value;
-      data.throwHand = document.getElementById("cp_throw").value;
-      data.teamColor = document.getElementById("cp_team").value;
-      if (data.position === "P") {
-        data.batHand = data.throwHand;
-      } else {
-        data.batHand = document.getElementById("cp_bat").value;
-      }
-      this.showAttributePopup();
+    // 60 overall target: 9 stats * 60
+    this.targetTotal = 9 * 60;
+
+    this.stats = {
+      contact: 60,
+      power: 60,
+      eye: 60,
+      speed: 60,
+      fielding: 60,
+      velocity: 60,
+      movement: 60,
+      control: 60,
+      stamina: 60
     };
-  }
 
-  /* ----- STEP 2: ATTRIBUTES (Exact 60 OVR) ----- */
-
-  getStatKeysForPosition() {
-    const pos = this.tempCreateData.position;
-    if (pos === "P") {
-      return ["velocity", "movement", "control", "stamina"];
-    }
-    return ["contact", "power", "eye", "speed", "fielding"];
-  }
-
-  getTargetTotalForPosition() {
-    const pos = this.tempCreateData.position;
-    if (pos === "P") return 240; // 4 stats * 60
-    return 300;                   // 5 stats * 60
-  }
-
-  initPresetStats() {
-    const data = this.tempCreateData;
-    const pos = data.position;
-    const stats = {};
-    if (pos === "P") {
-      // Example preset totaling 240
-      stats.velocity = 65;
-      stats.movement = 58;
-      stats.control  = 57;
-      stats.stamina  = 60;
-    } else {
-      // Example preset totaling 300
-      stats.contact = 55;
-      stats.power   = 65;
-      stats.eye     = 58;
-      stats.speed   = 60;
-      stats.fielding= 62;
-    }
-    data.stats = stats;
-  }
-
-  showAttributePopup() {
-    const data = this.tempCreateData;
-    if (!data.stats || Object.keys(data.stats).length === 0) {
-      this.initPresetStats();
-    }
-    const keys = this.getStatKeysForPosition();
-    const targetTotal = this.getTargetTotalForPosition();
-
-    const rowsHtml = keys.map(k => {
-      const label = k.toUpperCase();
-      const val = data.stats[k];
-      return `
-        <div style="margin-bottom:6px;display:flex;align-items:center;gap:6px;">
-          <div style="width:90px;">${label}</div>
-          <button data-stat="${k}" data-dir="-1" class="small-btn">-</button>
-          <span id="stat_val_${k}">${val}</span>
-          <button data-stat="${k}" data-dir="1" class="small-btn">+</button>
-        </div>
-      `;
-    }).join("");
-
-    const html = `
-      <div style="background:#102030;padding:16px;border-radius:10px;color:#fff;min-width:320px;max-width:430px;">
-        <div style="font-size:18px;margin-bottom:8px;">Attributes — Step 2/3</div>
-        <div style="font-size:12px;margin-bottom:10px;">Adjust your stats. Average must be 60 (total ${targetTotal}).</div>
-        ${rowsHtml}
-        <div id="attr_total" style="margin-top:8px;font-size:14px;"></div>
-        <div id="attr_error" style="margin-top:4px;font-size:12px;color:#ff7777;"></div>
-        <div style="margin-top:10px;display:flex;justify-content:flex-end;gap:8px;">
-          <button id="attr_cancel" class="small-btn">Cancel</button>
-          <button id="attr_next" class="small-btn" disabled>Continue</button>
-        </div>
-      </div>
-    `;
-    this.showPopup(html);
-
-    const updateTotals = () => {
-      const stats = data.stats;
-      const total = keys.reduce((t, k) => t + stats[k], 0);
-      const ovr = this.previewOVRFromStats();
-      const totalEl = document.getElementById("attr_total");
-      const errEl = document.getElementById("attr_error");
-      const nextBtn = document.getElementById("attr_next");
-
-      totalEl.textContent = `Total: ${total} / ${targetTotal} • OVR: ${ovr}`;
-
-      if (total === targetTotal) {
-        errEl.textContent = "";
-        nextBtn.disabled = false;
-      } else if (total > targetTotal) {
-        errEl.textContent = "Too many points assigned. Lower some stats.";
-        nextBtn.disabled = true;
-      } else {
-        errEl.textContent = "You still have points left to assign.";
-        nextBtn.disabled = true;
+    // Preset spreads (all sum to 540)
+    this.presets = {
+      balanced: {
+        contact: 60, power: 60, eye: 60, speed: 60, fielding: 60,
+        velocity: 60, movement: 60, control: 60, stamina: 60
+      },
+      powerBat: {
+        contact: 55, power: 80, eye: 55, speed: 50, fielding: 55,
+        velocity: 55, movement: 55, control: 55, stamina: 80
+      },
+      acePitcher: {
+        contact: 45, power: 45, eye: 55, speed: 55, fielding: 60,
+        velocity: 70, movement: 75, control: 75, stamina: 60
+      },
+      speedster: {
+        contact: 70, power: 45, eye: 60, speed: 80, fielding: 60,
+        velocity: 50, movement: 50, control: 55, stamina: 70
       }
     };
-
-    const buttons = this.popupRoot.querySelectorAll("button[data-stat]");
-    buttons.forEach(btn => {
-      btn.onclick = () => {
-        const stat = btn.getAttribute("data-stat");
-        const dir = parseInt(btn.getAttribute("data-dir"), 10);
-        const current = data.stats[stat];
-        const newVal = current + dir;
-        if (newVal < 1) return;
-        if (newVal > 99) return;
-        data.stats[stat] = newVal;
-        document.getElementById("stat_val_" + stat).textContent = newVal;
-        updateTotals();
-      };
-    });
-
-    document.getElementById("attr_cancel").onclick = () => {
-      this.tempCreateData = null;
-      this.cleanupDOM();
-    };
-
-    document.getElementById("attr_next").onclick = () => {
-      this.showSpritePopup();
-    };
-
-    updateTotals();
   }
 
-  previewOVRFromStats() {
-    const data = this.tempCreateData;
-    const pos = data.position;
-    const p = { position: pos };
-    const keys = this.getStatKeysForPosition();
-    keys.forEach(k => {
-      p[k] = data.stats[k];
-    });
-    return calculateOVR(p);
+  create() {
+    const w = this.cameras.main.width;
+    const h = this.cameras.main.height;
+    this.add.rectangle(0, 0, w * 2, h * 2, 0x081620).setOrigin(0);
+
+    this.titleText = this.add.text(w / 2, 40, "Create Player", {
+      font: "26px monospace",
+      fill: "#ffffff"
+    }).setOrigin(0.5);
+
+    this.stepContainer = this.add.container(0, 0);
+    this.errorText = this.add.text(w / 2, h - 40, "", {
+      font: "16px monospace",
+      fill: "#ff8080"
+    }).setOrigin(0.5);
+
+    this.showStep1();
   }
 
-  /* ----- STEP 3: SPRITE CREATOR ----- */
+  clearStep() {
+    if (this.stepContainer) {
+      this.stepContainer.destroy();
+      this.stepContainer = this.add.container(0, 0);
+    }
+    this.errorText.setText("");
+  }
 
-  showSpritePopup() {
-    const data = this.tempCreateData;
-    const html = `
-      <div style="background:#102030;padding:16px;border-radius:10px;color:#fff;min-width:340px;max-width:460px;">
-        <div style="font-size:18px;margin-bottom:8px;">Appearance — Step 3/3</div>
-        <div style="margin-bottom:6px;">
-          Hair Style:
-          <select id="sp_hair">
-            <option value="short">short</option>
-            <option value="long">long</option>
-            <option value="mohawk">mohawk</option>
-            <option value="bald">bald</option>
-          </select>
-        </div>
-        <div style="margin-bottom:6px;">
-          Hair Color:
-          <input id="sp_hair_color" type="color" value="${data.hairColor}" />
-        </div>
-        <div style="margin-bottom:6px;">
-          Skin:
-          <input id="sp_skin" type="color" value="${data.skin}" />
-        </div>
-        <div style="margin-bottom:6px;">
-          Facial Hair:
-          <select id="sp_facial">
-            <option value="none">none</option>
-            <option value="mustache">mustache</option>
-            <option value="beard">beard</option>
-            <option value="goatee">goatee</option>
-          </select>
-        </div>
-        <div style="margin-bottom:6px;">
-          Team Color:
-          <input id="sp_team" type="color" value="${data.teamColor}" />
-        </div>
-        <div style="margin-top:10px;display:flex;justify-content:flex-end;gap:8px;">
-          <button id="sp_cancel" class="small-btn">Cancel</button>
-          <button id="sp_create" class="small-btn">Create Player</button>
-        </div>
-      </div>
-    `;
-    this.showPopup(html);
+  showStep1() {
+    this.step = 1;
+    this.clearStep();
+    const w = this.cameras.main.width;
+    const h = this.cameras.main.height;
 
-    document.getElementById("sp_hair").value = data.hair || "short";
-    document.getElementById("sp_skin").value = data.skin || "#f1c27d";
-    document.getElementById("sp_team").value = data.teamColor || "#2a6dd6";
+    const cx = w / 2;
+    const cy = h / 2;
 
-    const applyAndPreview = () => {
-      data.hair = document.getElementById("sp_hair").value;
-      data.hairColor = document.getElementById("sp_hair_color").value;
-      data.skin = document.getElementById("sp_skin").value;
-      data.facial = document.getElementById("sp_facial").value;
-      data.teamColor = document.getElementById("sp_team").value;
-      this.updatePreviewSpriteFromTemp();
-    };
+    const panel = this.add.rectangle(cx, cy, 640, 360, 0x000000, 0.85)
+      .setStrokeStyle(2, 0xffffff);
+    this.stepContainer.add(panel);
 
-    ["sp_hair", "sp_hair_color", "sp_skin", "sp_facial", "sp_team"].forEach(id => {
-      document.getElementById(id).onchange = applyAndPreview;
+    const header = this.add.text(cx, cy - 150, "Step 1: Basics", {
+      font: "22px monospace",
+      fill: "#ffffff"
+    }).setOrigin(0.5);
+    this.stepContainer.add(header);
+
+    // Name
+    const nameLabel = this.add.text(cx - 260, cy - 100, "Name:", {
+      font: "16px monospace",
+      fill: "#ffffff"
+    });
+    this.stepContainer.add(nameLabel);
+
+    const nameValue = this.add.text(cx - 160, cy - 100, this.config.name, {
+      font: "16px monospace",
+      fill: "#ffffaa",
+      backgroundColor: "#222222",
+      padding: { x: 4, y: 2 }
+    }).setInteractive();
+    nameValue.on("pointerdown", () => {
+      const newName = prompt("Enter player name:", this.config.name);
+      if (newName && newName.trim().length > 0) {
+        this.config.name = newName.trim();
+        nameValue.setText(this.config.name);
+      }
+    });
+    this.stepContainer.add(nameValue);
+
+    // Position cycle
+    const positions = ["P", "C", "1B", "2B", "3B", "SS", "LF", "CF", "RF", "DH"];
+    const posLabel = this.add.text(cx - 260, cy - 60, "Position:", {
+      font: "16px monospace",
+      fill: "#ffffff"
+    });
+    this.stepContainer.add(posLabel);
+
+    const posValue = this.add.text(cx - 160, cy - 60, this.config.position, {
+      font: "16px monospace",
+      fill: "#ffffaa",
+      backgroundColor: "#222222",
+      padding: { x: 4, y: 2 }
+    }).setInteractive();
+    posValue.on("pointerdown", () => {
+      const idx = positions.indexOf(this.config.position);
+      const next = (idx + 1) % positions.length;
+      this.config.position = positions[next];
+      posValue.setText(this.config.position);
+    });
+    this.stepContainer.add(posValue);
+
+    // Handedness
+    const handLabel = this.add.text(cx - 260, cy - 20, "Throw / Bat:", {
+      font: "16px monospace",
+      fill: "#ffffff"
+    });
+    this.stepContainer.add(handLabel);
+
+    const throwVal = this.add.text(cx - 140, cy - 20, "THR: " + this.config.throwHand, {
+      font: "16px monospace",
+      fill: "#ffffaa",
+      backgroundColor: "#222222",
+      padding: { x: 4, y: 2 }
+    }).setInteractive();
+    throwVal.on("pointerdown", () => {
+      this.config.throwHand = this.config.throwHand === "R" ? "L" : "R";
+      throwVal.setText("THR: " + this.config.throwHand);
+    });
+    this.stepContainer.add(throwVal);
+
+    const batVal = this.add.text(cx + 10, cy - 20, "BAT: " + this.config.batHand, {
+      font: "16px monospace",
+      fill: "#ffffaa",
+      backgroundColor: "#222222",
+      padding: { x: 4, y: 2 }
+    }).setInteractive();
+    batVal.on("pointerdown", () => {
+      this.config.batHand = this.config.batHand === "R" ? "L" : "R";
+      batVal.setText("BAT: " + this.config.batHand);
+    });
+    this.stepContainer.add(batVal);
+
+    // Hair style
+    const hairStyles = ["short", "long", "mohawk", "bald"];
+    const hairLabel = this.add.text(cx - 260, cy + 20, "Hair:", {
+      font: "16px monospace",
+      fill: "#ffffff"
+    });
+    this.stepContainer.add(hairLabel);
+
+    const hairVal = this.add.text(cx - 160, cy + 20, this.config.hair, {
+      font: "16px monospace",
+      fill: "#ffffaa",
+      backgroundColor: "#222222",
+      padding: { x: 4, y: 2 }
+    }).setInteractive();
+    hairVal.on("pointerdown", () => {
+      const idx = hairStyles.indexOf(this.config.hair);
+      const next = (idx + 1) % hairStyles.length;
+      this.config.hair = hairStyles[next];
+      hairVal.setText(this.config.hair);
+    });
+    this.stepContainer.add(hairVal);
+
+    // Facial hair
+    const facialStyles = ["none", "mustache", "beard", "goatee"];
+    const facialLabel = this.add.text(cx - 260, cy + 60, "Facial Hair:", {
+      font: "16px monospace",
+      fill: "#ffffff"
+    });
+    this.stepContainer.add(facialLabel);
+
+    const facialVal = this.add.text(cx - 160, cy + 60, this.config.facial, {
+      font: "16px monospace",
+      fill: "#ffffaa",
+      backgroundColor: "#222222",
+      padding: { x: 4, y: 2 }
+    }).setInteractive();
+    facialVal.on("pointerdown", () => {
+      const idx = facialStyles.indexOf(this.config.facial);
+      const next = (idx + 1) % facialStyles.length;
+      this.config.facial = facialStyles[next];
+      facialVal.setText(this.config.facial);
+    });
+    this.stepContainer.add(facialVal);
+
+    // Skin & Team color cycles (predefined palette)
+    const skinColors = ["#f1c27d", "#e0ac69", "#c68642", "#8d5524"];
+    const teamColors = ["#2a6dd6", "#b22222", "#228b22", "#8b008b", "#ff8c00"];
+
+    const skinLabel = this.add.text(cx + 40, cy - 100, "Skin:", {
+      font: "16px monospace",
+      fill: "#ffffff"
+    });
+    this.stepContainer.add(skinLabel);
+
+    const skinVal = this.add.text(cx + 120, cy - 100, "Tap", {
+      font: "16px monospace",
+      fill: "#ffffaa",
+      backgroundColor: this.config.skin,
+      padding: { x: 10, y: 6 }
+    }).setInteractive();
+    skinVal.on("pointerdown", () => {
+      const idx = skinColors.indexOf(this.config.skin);
+      const next = (idx + 1) % skinColors.length;
+      this.config.skin = skinColors[next];
+      skinVal.setBackgroundColor(this.config.skin);
+    });
+    this.stepContainer.add(skinVal);
+
+    const teamLabel = this.add.text(cx + 40, cy - 60, "Team Color:", {
+      font: "16px monospace",
+      fill: "#ffffff"
+    });
+    this.stepContainer.add(teamLabel);
+
+    const teamVal = this.add.text(cx + 160, cy - 60, "Tap", {
+      font: "16px monospace",
+      fill: "#ffffaa",
+      backgroundColor: this.config.teamColor,
+      padding: { x: 10, y: 6 }
+    }).setInteractive();
+    teamVal.on("pointerdown", () => {
+      const idx = teamColors.indexOf(this.config.teamColor);
+      const next = (idx + 1) % teamColors.length;
+      this.config.teamColor = teamColors[next];
+      teamVal.setBackgroundColor(this.config.teamColor);
+    });
+    this.stepContainer.add(teamVal);
+
+    // Navigation buttons
+    const backBtn = this.makeButton(cx - 200, cy + 130, "Back to Profiles", () => {
+      this.scene.start("ProfileScene");
+    });
+    const nextBtn = this.makeButton(cx + 140, cy + 130, "Next: Attributes", () => {
+      this.showStep2();
     });
 
-    document.getElementById("sp_cancel").onclick = () => {
-      this.tempCreateData = null;
-      this.destroyPreviewSprite();
-      this.cleanupDOM();
-    };
+    this.stepContainer.add(backBtn);
+    this.stepContainer.add(nextBtn);
+  }
 
-    document.getElementById("sp_create").onclick = () => {
+  // ---------- STEP 2: Attribute Allocation ----------
+  showStep2() {
+    this.step = 2;
+    this.clearStep();
+    const w = this.cameras.main.width;
+    const h = this.cameras.main.height;
+    const cx = w / 2;
+    const cy = h / 2;
+
+    const panel = this.add.rectangle(cx, cy, 740, 420, 0x000000, 0.9)
+      .setStrokeStyle(2, 0xffffff);
+    this.stepContainer.add(panel);
+
+    const header = this.add.text(cx, cy - 190, "Step 2: Attributes (60 OVR)", {
+      font: "22px monospace",
+      fill: "#ffffff"
+    }).setOrigin(0.5);
+    this.stepContainer.add(header);
+
+    // Preset buttons
+    const presets = [
+      { key: "balanced", label: "Balanced" },
+      { key: "powerBat", label: "Power Bat" },
+      { key: "acePitcher", label: "Ace Pitcher" },
+      { key: "speedster", label: "Speedster" }
+    ];
+
+    presets.forEach((p, idx) => {
+      const btn = this.makeButton(cx - 320 + idx * 180, cy - 150, p.label, () => {
+        this.applyPreset(p.key);
+        this.showStep2(); // re-render with updated stats
+      });
+      this.stepContainer.add(btn);
+    });
+
+    // Stats list
+    const attrs = [
+      "contact", "power", "eye", "speed", "fielding",
+      "velocity", "movement", "control", "stamina"
+    ];
+
+    const leftX = cx - 300;
+    const topY = cy - 110;
+    const rowH = 36;
+
+    attrs.forEach((attr, index) => {
+      const y = topY + index * rowH;
+      const label = this.add.text(leftX, y, attr.toUpperCase() + ":", {
+        font: "16px monospace",
+        fill: "#ffffff"
+      });
+      this.stepContainer.add(label);
+
+      const minusBtn = this.makeButton(leftX + 190, y, "-", () => {
+        this.adjustStat(attr, -1);
+      });
+      const valText = this.add.text(leftX + 230, y, this.stats[attr].toString(), {
+        font: "16px monospace",
+        fill: "#ffffaa"
+      });
+      const plusBtn = this.makeButton(leftX + 280, y, "+", () => {
+        this.adjustStat(attr, +1);
+      });
+
+      // store reference for quick update (if you want smarter UI later)
+      valText.name = "val_" + attr;
+
+      this.stepContainer.add(minusBtn);
+      this.stepContainer.add(valText);
+      this.stepContainer.add(plusBtn);
+    });
+
+    const total = this.currentTotal();
+    const remaining = this.targetTotal - total;
+
+    const totalText = this.add.text(cx - 100, cy + 90,
+      "Total Points: " + total + "  (Target: " + this.targetTotal + ")", {
+        font: "16px monospace",
+        fill: "#ffffff"
+      });
+    const remainText = this.add.text(cx - 100, cy + 120,
+      "Points Remaining: " + remaining, {
+        font: "16px monospace",
+        fill: remaining === 0 ? "#80ff80" : "#ff8080"
+      });
+
+    this.stepContainer.add(totalText);
+    this.stepContainer.add(remainText);
+
+    const backBtn = this.makeButton(cx - 200, cy + 160, "Back: Basics", () => {
+      this.showStep1();
+    });
+    const nextBtn = this.makeButton(cx + 140, cy + 160, "Next: Appearance", () => {
+      if (this.targetTotal - this.currentTotal() !== 0) {
+        this.errorText.setText("You must allocate exactly 60 OVR (all points used) before continuing.");
+        return;
+      }
+      this.showStep3();
+    });
+
+    this.stepContainer.add(backBtn);
+    this.stepContainer.add(nextBtn);
+  }
+
+  applyPreset(key) {
+    const preset = this.presets[key];
+    if (!preset) return;
+    this.stats = { ...preset };
+  }
+
+  currentTotal() {
+    return Object.values(this.stats).reduce((a, b) => a + b, 0);
+  }
+
+  adjustStat(attr, delta) {
+    const current = this.stats[attr];
+    if (current == null) return;
+
+    const newVal = clampAttr(current + delta);
+    const newStats = { ...this.stats, [attr]: newVal };
+    const total = Object.values(newStats).reduce((a, b) => a + b, 0);
+
+    if (total > this.targetTotal) {
+      // can't go over allowed pool
+      return;
+    }
+
+    this.stats[attr] = newVal;
+    this.showStep2(); // re-render
+  }
+
+  // ---------- STEP 3: Appearance + Preview ----------
+  showStep3() {
+    this.step = 3;
+    this.clearStep();
+    const w = this.cameras.main.width;
+    const h = this.cameras.main.height;
+    const cx = w / 2;
+    const cy = h / 2;
+
+    const panel = this.add.rectangle(cx, cy, 740, 420, 0x000000, 0.9)
+      .setStrokeStyle(2, 0xffffff);
+    this.stepContainer.add(panel);
+
+    const header = this.add.text(cx, cy - 190, "Step 3: Appearance & Confirm", {
+      font: "22px monospace",
+      fill: "#ffffff"
+    }).setOrigin(0.5);
+    this.stepContainer.add(header);
+
+    // Live sprite preview
+    const gen = new PixelPlayerGenerator(this);
+    const previewCfg = {
+      name: this.config.name,
+      position: this.config.position,
+      handedness: this.config.batHand || "R",
+      hair: this.config.hair,
+      hairColor: this.config.hair, // simple
+      facial: this.config.facial,
+      skin: this.config.skin,
+      teamColor: this.config.teamColor,
+      role: "batter"
+    };
+    const texKey = gen.generateCharacterTexture(previewCfg);
+    const animKeys = gen.makeAnimationKeysFor(texKey);
+    const sprite = this.add.sprite(cx - 230, cy - 40, texKey).setOrigin(0.5).setScale(3);
+    sprite.play(animKeys.idle);
+    this.stepContainer.add(sprite);
+
+    const infoText = this.add.text(cx - 120, cy - 80,
+      `${this.config.name}\nPOS: ${this.config.position}   BAT: ${this.config.batHand}   THR: ${this.config.throwHand}`,
+      {
+        font: "16px monospace",
+        fill: "#ffffff"
+      }
+    );
+    this.stepContainer.add(infoText);
+
+    // Expanded appearance: cycle a few extra colors/styles
+    const hairColors = ["#222222", "#8b4513", "#d2b48c", "#ffa500"];
+    const jerseyColors = ["#2a6dd6", "#b22222", "#228b22", "#8b008b", "#ff8c00", "#444444"];
+
+    const hairColorLabel = this.add.text(cx - 120, cy - 20, "Hair Color:", {
+      font: "16px monospace",
+      fill: "#ffffff"
+    });
+    this.stepContainer.add(hairColorLabel);
+
+    let hairColorIndex = 0;
+    const hairColorBtn = this.makeButton(cx + 20, cy - 22, "Change", () => {
+      hairColorIndex = (hairColorIndex + 1) % hairColors.length;
+      previewCfg.hairColor = hairColors[hairColorIndex];
+      const newKey = gen.generateCharacterTexture(previewCfg);
+      const newAnimKeys = gen.makeAnimationKeysFor(newKey);
+      sprite.setTexture(newKey);
+      sprite.play(newAnimKeys.idle);
+    });
+    this.stepContainer.add(hairColorBtn);
+
+    const jerseyLabel = this.add.text(cx - 120, cy + 20, "Jersey Color:", {
+      font: "16px monospace",
+      fill: "#ffffff"
+    });
+    this.stepContainer.add(jerseyLabel);
+
+    let jerseyIndex = 0;
+    const jerseyBtn = this.makeButton(cx + 20, cy + 18, "Change", () => {
+      jerseyIndex = (jerseyIndex + 1) % jerseyColors.length;
+      this.config.teamColor = jerseyColors[jerseyIndex];
+      previewCfg.teamColor = this.config.teamColor;
+      const newKey = gen.generateCharacterTexture(previewCfg);
+      const newAnimKeys = gen.makeAnimationKeysFor(newKey);
+      sprite.setTexture(newKey);
+      sprite.play(newAnimKeys.idle);
+    });
+    this.stepContainer.add(jerseyBtn);
+
+    const noteText = this.add.text(cx - 120, cy + 70,
+      "You can tweak hair/jersey colors here.\nWhen ready, press Finish to save this player.",
+      {
+        font: "14px monospace",
+        fill: "#cccccc"
+      }
+    );
+    this.stepContainer.add(noteText);
+
+    const backBtn = this.makeButton(cx - 200, cy + 150, "Back: Attributes", () => {
+      this.showStep2();
+    });
+    const finishBtn = this.makeButton(cx + 140, cy + 150, "Finish & Save", () => {
       this.finishCreatePlayer();
-    };
+    });
 
-    applyAndPreview();
+    this.stepContainer.add(backBtn);
+    this.stepContainer.add(finishBtn);
   }
 
-  updatePreviewSpriteFromTemp() {
-    const data = this.tempCreateData;
-    if (!data) return;
+  makeButton(x, y, text, onClick) {
+    const btn = this.add.text(x, y, text, {
+      font: "16px monospace",
+      fill: "#00ffff",
+      backgroundColor: "#000000",
+      padding: { x: 6, y: 4 }
+    }).setInteractive();
 
-    const cfg = {
-      id: "preview",
-      name: data.name,
-      position: data.position,
-      handedness: data.throwHand,
-      hair: data.hair,
-      hairColor: data.hairColor,
-      skin: data.skin,
-      facial: data.facial,
-      teamColor: data.teamColor,
-      role: data.position === "P" ? "pitcher" : "batter"
-    };
+    btn.on("pointerdown", () => {
+      onClick();
+    });
 
-    const key = this.generator.generateCharacterTexture(cfg);
-    const animKeys = this.generator.makeAnimationKeysFor(key);
-
-    if (!this.previewSprite) {
-      this.previewSprite = this.add.sprite(
-        this.cameras.main.width / 2,
-        this.cameras.main.height / 2 + 140,
-        key
-      ).setOrigin(0.5, 0.9).setScale(3).setDepth(30);
-    } else {
-      this.previewSprite.setTexture(key);
-    }
-    this.previewSprite.play(animKeys.idle);
+    return btn;
   }
-
-  destroyPreviewSprite() {
-    if (this.previewSprite) {
-      this.previewSprite.destroy();
-      this.previewSprite = null;
-    }
-  }
-
-  /* ----- finalize create ----- */
 
   finishCreatePlayer() {
-    const d = this.tempCreateData;
-    if (!d) return;
+    // build a full player object based on config + stats
+    // start from makeNewPlayer to keep consistent structure
+    const base = makeNewPlayer(
+      this.config.name,
+      this.config.position,
+      this.config.batHand || "R",
+      this.config.hair,
+      this.config.skin,
+      this.config.facial,
+      this.config.teamColor
+    );
 
-    const player = {
-      id: "pl_" + Date.now() + "_" + Math.floor(Math.random() * 9999),
-      name: d.name,
-      position: d.position,
-      handedness: d.throwHand,
-      batHand: d.batHand,
-      hair: d.hair,
-      hairColor: d.hairColor,
-      skin: d.skin,
-      facial: d.facial,
-      teamColor: d.teamColor,
-      rarity: "common",
-      level: 1,
-      xp: 0,
-      xpToNextLevel: 10,
-      currency: 50,
-      unlockedMaxRarity: "common",
-      bossCount: 0,
-      perksApplied: {},
-      perksOwned: [],
-      pitches: {
-        fastball: 60,
-        slider: 55,
-        curveball: 55,
-        changeup: 55
-      }
-    };
-
-    // baseline attributes
-    player.velocity = 40;
-    player.movement = 40;
-    player.control  = 40;
-    player.stamina  = 40;
-    player.contact  = 40;
-    player.power    = 40;
-    player.eye      = 40;
-    player.speed    = 40;
-    player.fielding = 40;
+    // override hands
+    base.throwHand = this.config.throwHand;
+    base.batHand = this.config.batHand;
+    base.handedness = this.config.batHand || "R";
 
     // apply custom stats
-    const keys = this.getStatKeysForPosition();
-    keys.forEach(k => {
-      player[k] = d.stats[k];
+    Object.keys(this.stats).forEach(k => {
+      base[k] = clampAttr(this.stats[k]);
     });
 
-    ["velocity","movement","control","stamina",
-     "contact","power","eye","speed","fielding"].forEach(attr => {
-      player.perksApplied[attr] = 0;
-    });
+    // recompute overall
+    base.overall = computeOverall(base);
 
-    player.ovr = calculateOVR(player);
-
-    const idx = d.slotIndex;
-    if (this.players[idx]) {
-      this.players[idx] = player;
-    } else {
-      this.players.push(player);
+    // save into the correct slot
+    let slots;
+    try {
+      const arr = JSON.parse(localStorage.getItem("players") || "[]");
+      slots = [arr[0] || null, arr[1] || null, arr[2] || null];
+    } catch (e) {
+      slots = [null, null, null];
     }
-    this.savePlayers();
 
-    localStorage.setItem("currentPlayer", JSON.stringify(player));
+    slots[this.slotIndex] = base;
+    localStorage.setItem("players", JSON.stringify(slots));
+    localStorage.setItem("currentPlayer", JSON.stringify(base));
 
-    this.tempCreateData = null;
-    this.destroyPreviewSprite();
-    this.cleanupDOM();
-    this.renderSlots();
+    // start game
+    this.scene.start("GameScene");
   }
 }
+
 
 /* ---------- GameScene (Main Gameplay) ---------- */
 
@@ -2086,7 +2194,7 @@ const config = {
     default: "arcade",
     arcade: { debug: false }
   },
-  scene: [BootScene, TitleScene, ProfileScene, GameScene, ShopScene]
+    scene: [BootScene, TitleScene, ProfileScene, CreatePlayerScene, GameScene, ShopScene]
 };
 
 const game = new Phaser.Game(config);
