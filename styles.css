@@ -1,5 +1,61 @@
-html,body { margin:0; padding:0; height:100%; background:#0b2030; color:#fff; font-family: monospace; }
-#game-container { width:100%; height:100vh; display:flex; align-items:center; justify-content:center; }
-button, input, select { font-family: monospace; }
-.shop-ui { position:absolute; left:20px; top:20px; background:rgba(0,0,0,0.6); padding:8px; border-radius:6px; color:#fff; }
-.small-btn { display:inline-block; padding:6px 10px; margin:4px; background:#2a596e; color:#fff; border-radius:6px; cursor:pointer; }
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: #0b2030;
+  color: #ffffff;
+  font-family: monospace;
+}
+
+#game-container {
+  width: 100%;
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Simple overlay UI for profile/shop panels (uses DOM) */
+.overlay-ui {
+  position: absolute;
+  left: 20px;
+  top: 20px;
+  background: rgba(0, 0, 0, 0.7);
+  padding: 10px;
+  border-radius: 8px;
+  color: #ffffff;
+  font-family: monospace;
+  z-index: 20;
+}
+
+.small-btn {
+  display: inline-block;
+  padding: 6px 10px;
+  margin: 4px 2px;
+  border-radius: 6px;
+  background: #2a596e;
+  border: none;
+  color: #ffffff;
+  cursor: pointer;
+}
+
+.small-btn:hover {
+  background: #357b93;
+}
+
+.overlay-ui input,
+.overlay-ui select {
+  font-family: monospace;
+  margin-left: 4px;
+}
+
+/* Tooltip / floating text used for coin feedback */
+.floating-text {
+  position: absolute;
+  color: #00ff00;
+  background: #000000;
+  padding: 4px 6px;
+  border-radius: 4px;
+  font-size: 14px;
+  pointer-events: none;
+}
