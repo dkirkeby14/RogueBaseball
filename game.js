@@ -22,12 +22,28 @@ function rarityIndex(name) {
   return idx === -1 ? 0 : idx;
 }
 
+// NEW: Overall rating helper (used everywhere for OVR)
+function calculateOVR(player) {
+  let attrs;
+
+  if (player.position === "P") {
+    // Pitcher: use pitching attributes for overall
+    attrs = ["velocity", "movement", "control", "stamina"];
+  } else {
+    // Hitter / fielder: use hitting + fielding attributes
+    attrs = ["contact", "power", "eye", "speed", "fielding"];
+  }
+
+  const sum = attrs.reduce((total, key) => total + (player[key] || 0), 0);
+  return Math.floor(sum / attrs.length);
+}
+
 /* ================================
    PLAYER CREATION & ATTRIBUTES
+   (random helper, still used for NPC style if needed)
 ================================= */
 
 function makeNewPlayer(name, position, handedness, hair, skin, facial, teamColor) {
-  // base helper to bias towards mid-60s / 70s
   function base(min, max) {
     return clampAttr(randInt(min, max));
   }
@@ -66,11 +82,10 @@ function makeNewPlayer(name, position, handedness, hair, skin, facial, teamColor
       curveball: base(55, 78),
       changeup: base(55, 78)
     },
-    perksApplied: {},   // stat -> amount from perks (additive)
+    perksApplied: {},
     perksOwned: []
   };
 
-  // Initialize perk overlays
   ["velocity", "movement", "control", "stamina",
    "contact", "power", "eye", "speed", "fielding"].forEach(attr => {
     p.perksApplied[attr] = 0;
@@ -173,7 +188,6 @@ class PixelPlayerGenerator {
         const py = r * this.baseH;
         drawPlayerFrame(ctx, px, py, this.baseW, this.baseH, f, action, cfg);
       }
-      // duplicate last frame to fill row
       for (let f = frames; f < cols; f++) {
         const sx = (frames - 1) * this.baseW;
         const sy = r * this.baseH;
@@ -181,11 +195,8 @@ class PixelPlayerGenerator {
       }
     }
 
-    // slice into individual textures
     let index = 0;
     const framesMap = {};
-    const anims = this.scene.anims;
-
     for (let r = 0; r < rows; r++) {
       const action = actions[r];
       framesMap[action] = [];
@@ -205,6 +216,7 @@ class PixelPlayerGenerator {
     }
 
     const animKeys = this.makeAnimationKeysFor(key);
+    const anims = this.scene.anims;
     function makeAnim(scene, animKey, frames, fps, repeat) {
       if (!scene.anims.exists(animKey)) {
         scene.anims.create({
@@ -264,22 +276,18 @@ function drawPlayerFrame(ctx, px, py, w, h, frameIndex, action, cfg) {
   const torsoX = cx - Math.floor(torsoW / 2);
   const torsoY = py + 8 + offsetY;
 
-  // torso
   ctx.fillStyle = team;
   ctx.fillRect(torsoX, torsoY, torsoW, torsoH);
 
-  // legs
   ctx.fillStyle = "#333333";
   ctx.fillRect(cx - 3, torsoY + torsoH, 3, 5);
   ctx.fillRect(cx, torsoY + torsoH, 3, 5);
 
-  // head
   const headX = cx - 2;
   const headY = torsoY - 6 + offsetY;
   ctx.fillStyle = skin;
   ctx.fillRect(headX, headY, 5, 5);
 
-  // hair
   ctx.fillStyle = hairColor;
   if (hairStyle === "short") {
     ctx.fillRect(headX, headY, 5, 2);
@@ -289,7 +297,6 @@ function drawPlayerFrame(ctx, px, py, w, h, frameIndex, action, cfg) {
     ctx.fillRect(cx - 1, headY - 1, 1, 5);
   }
 
-  // facial hair
   ctx.fillStyle = "#222222";
   if (facial === "mustache") {
     ctx.fillRect(cx - 1, headY + 1, 3, 1);
@@ -299,25 +306,22 @@ function drawPlayerFrame(ctx, px, py, w, h, frameIndex, action, cfg) {
     ctx.fillRect(cx - 1, headY + 3, 3, 1);
   }
 
-  // eyes
   ctx.fillStyle = "#111111";
   ctx.fillRect(cx - 1, headY + 1, 1, 1);
   ctx.fillRect(cx + 1, headY + 1, 1, 1);
 
-  // equip
   if (cfg.role === "batter" || cfg.position === "B") {
     const batX = cfg.handedness === "L" ? cx - 9 + armOffset : cx + 3 + armOffset;
     ctx.fillStyle = "#7a5c2b";
     ctx.fillRect(batX, torsoY + 1, 1, 6);
   } else if (cfg.role === "pitcher" || cfg.position === "P") {
     ctx.fillStyle = "#5a3a1a";
-    ctx.fillRect(cx - 7, torsoY + 1, 3, 3); // glove
+    ctx.fillRect(cx - 7, torsoY + 1, 3, 3);
     const handSide = cfg.handedness === "R" ? 1 : -1;
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(cx + handSide * (3 + Math.max(0, armOffset)), torsoY - 1, 1, 1);
   }
 
-  // outline
   ctx.strokeStyle = "#000000";
   ctx.lineWidth = 0.5;
   ctx.strokeRect(px + 0.5, py + 0.5, w - 1, h - 1);
@@ -337,7 +341,6 @@ function calculateHitChance(pitcher, batter, pitchType, swingType, repeatCount) 
   const effPitch = getEffectivePitchRating(pitcher, pitchType);
   let hitChance = 50;
 
-  // pitcher suppresses hits
   hitChance -= effPitch * 0.35;
   hitChance -= (getEffectiveAttribute(pitcher, "movement") - 50) * 0.25;
 
@@ -347,7 +350,6 @@ function calculateHitChance(pitcher, batter, pitchType, swingType, repeatCount) 
     hitChance += (getEffectiveAttribute(batter, "power") - 50) * 0.30;
   }
 
-  // eye vs repeated pitch
   hitChance += repeatCount * ((getEffectiveAttribute(batter, "eye") - 50) * 0.20);
 
   return Phaser.Math.Clamp(Math.round(hitChance), 5, 95);
@@ -355,7 +357,6 @@ function calculateHitChance(pitcher, batter, pitchType, swingType, repeatCount) 
 
 function chooseSwingType(batter, count, runnersOn) {
   if (runnersOn > 0 && count.strikes < 2) {
-    // small chance to bunt
     if (randInt(1, 100) <= 20) return "bunt";
   }
   if (count.strikes === 2) return "contact";
@@ -377,7 +378,6 @@ function choosePitchType(pitcher, count) {
 
   const roll = randInt(1, 100);
   if (count.strikes === 2 && roll <= 60) {
-    // likely offspeed
     const off = keys.filter(k => k !== "fastball");
     if (off.length > 0) {
       return off[randInt(0, off.length - 1)];
@@ -508,7 +508,6 @@ function generateUpgradeCard(rarity) {
 }
 
 function generatePlayerCard(rarity) {
-  // For now, just a collectible placeholder; doesn’t affect gameplay yet.
   return {
     kind: "playerCard",
     rarity: rarity,
@@ -601,26 +600,39 @@ class TitleScene extends Phaser.Scene {
   }
 }
 
-/* ---------- ProfileScene ---------- */
+/* ---------- NEW ProfileScene ---------- */
+
 class ProfileScene extends Phaser.Scene {
   constructor() {
     super({ key: "ProfileScene" });
-    this.profileUI = null;
+    this.players = [];
+    this.generator = null;
+    this.slotContainers = [];
+    this.popupRoot = null;
+    this.tempCreateData = null;
+    this.previewSprite = null;
   }
 
   create() {
     const w = this.cameras.main.width;
     const h = this.cameras.main.height;
+
     this.add.rectangle(0, 0, w * 2, h * 2, 0x0b2430).setOrigin(0);
-    this.add.text(w / 2, 40, "Custom Player", {
-      font: "24px monospace",
+    this.add.text(w / 2, 40, "Select / Create Player", {
+      font: "26px monospace",
       fill: "#ffffff"
     }).setOrigin(0.5);
 
+    this.generator = new PixelPlayerGenerator(this);
+
     this.loadPlayers();
-    this.renderPlayerList();
-    this.createProfileDOM();
+    this.renderSlots();
+
+    this.events.on("shutdown", () => this.cleanupDOM());
+    this.events.on("destroy", () => this.cleanupDOM());
   }
+
+  /* ----- load/save ----- */
 
   loadPlayers() {
     try {
@@ -628,105 +640,608 @@ class ProfileScene extends Phaser.Scene {
     } catch (e) {
       this.players = [];
     }
+    if (!Array.isArray(this.players)) this.players = [];
+    if (this.players.length > 3) {
+      this.players = this.players.slice(0, 3);
+      localStorage.setItem("players", JSON.stringify(this.players));
+    }
   }
 
   savePlayers() {
     localStorage.setItem("players", JSON.stringify(this.players));
   }
 
-  renderPlayerList() {
-    if (this.playerTexts) {
-      this.playerTexts.forEach(t => t.destroy());
-    }
-    this.playerTexts = [];
+  cleanupDOM() {
+    const oldPopup = document.getElementById("profile-popup-root");
+    if (oldPopup) oldPopup.remove();
+  }
 
-    const startY = 100;
+  /* ----- slot render ----- */
+
+  renderSlots() {
+    if (this.slotContainers) {
+      this.slotContainers.forEach(c => c.destroy());
+    }
+    this.slotContainers = [];
+
+    const totalWidth = 3 * 260 + 2 * 40; // card width + gaps
+    const startX = (GAME_WIDTH - totalWidth) / 2;
+    const slotWidth = 260;
     const gap = 40;
-    if (this.players.length === 0) {
-      this.add.text(GAME_WIDTH / 2, startY, "No players yet. Create one below.", {
-        font: "18px monospace",
-        fill: "#ffffff"
-      }).setOrigin(0.5);
-    } else {
-      this.players.forEach((p, i) => {
-        const label = p.name + " (Lvl " + (p.level || 1) + ")";
-        const t = this.add.text(80, startY + i * gap, label, {
-          font: "18px monospace",
-          fill: "#ffffff",
-          backgroundColor: "#000000",
-          padding: { x: 6, y: 4 }
-        }).setInteractive();
-        t.on("pointerdown", () => {
-          localStorage.setItem("currentPlayer", JSON.stringify(p));
-          this.scene.start("GameScene");
-        });
-        this.playerTexts.push(t);
-      });
+
+    for (let i = 0; i < 3; i++) {
+      const x = startX + i * (slotWidth + gap);
+      const y = 120;
+      const container = this.add.container(0, 0);
+      this.slotContainers.push(container);
+
+      const bg = this.add.rectangle(
+        x,
+        y,
+        slotWidth,
+        240,
+        0x000000,
+        0.7
+      ).setOrigin(0);
+
+      this.addSlotContent(container, bg, i);
+      container.add(bg);
     }
   }
 
-  createProfileDOM() {
-    if (this.profileUI) {
-      this.profileUI.remove();
-      this.profileUI = null;
+  addSlotContent(container, bgRect, index) {
+    const slotPlayer = this.players[index];
+
+    if (!slotPlayer) {
+      const cx = bgRect.x + bgRect.width / 2;
+      const cy = bgRect.y + bgRect.height / 2;
+      const plusBox = this.add.rectangle(
+        cx,
+        cy,
+        140,
+        140,
+        0x333333,
+        0.7
+      ).setOrigin(0.5).setInteractive();
+
+      const plusText = this.add.text(cx, cy, "+", {
+        font: "60px monospace",
+        fill: "#bbbbbb"
+      }).setOrigin(0.5);
+
+      plusBox.on("pointerdown", () => {
+        this.startCreateFlow(index);
+      });
+
+      container.add(plusBox);
+      container.add(plusText);
+      return;
     }
+
+    const cx = bgRect.x + bgRect.width / 2;
+    const keyCfg = {
+      ...slotPlayer,
+      role: slotPlayer.position === "P" ? "pitcher" : "batter"
+    };
+    const key = this.generator.generateCharacterTexture(keyCfg);
+    const animKeys = this.generator.makeAnimationKeysFor(key);
+
+    const sprite = this.add.sprite(
+      cx,
+      bgRect.y + 120,
+      key
+    ).setOrigin(0.5, 0.9).setScale(3);
+    sprite.play(animKeys.idle);
+
+    const ovr = calculateOVR(slotPlayer);
+
+    const nameText = this.add.text(
+      bgRect.x + 10,
+      bgRect.y + 10,
+      "Name: " + slotPlayer.name,
+      { font: "14px monospace", fill: "#ffffff" }
+    );
+    const posText = this.add.text(
+      bgRect.x + 10,
+      bgRect.y + 30,
+      "Pos: " + (slotPlayer.position || "P"),
+      { font: "14px monospace", fill: "#ffffff" }
+    );
+    const ovrText = this.add.text(
+      bgRect.x + 10,
+      bgRect.y + 50,
+      "OVR: " + ovr,
+      { font: "14px monospace", fill: "#ffff00" }
+    );
+
+    const selectBtn = this.add.text(
+      bgRect.x + 15,
+      bgRect.y + bgRect.height - 32,
+      "[ Select ]",
+      { font: "14px monospace", fill: "#00ff00", backgroundColor: "#000000", padding: { x: 4, y: 2 } }
+    ).setInteractive();
+
+    selectBtn.on("pointerdown", () => {
+      localStorage.setItem("currentPlayer", JSON.stringify(slotPlayer));
+      this.cleanupDOM();
+      this.scene.start("GameScene");
+    });
+
+    const deleteBtn = this.add.text(
+      bgRect.x + bgRect.width - 100,
+      bgRect.y + bgRect.height - 32,
+      "[ Delete ]",
+      { font: "14px monospace", fill: "#ff5555", backgroundColor: "#000000", padding: { x: 4, y: 2 } }
+    ).setInteractive();
+
+    deleteBtn.on("pointerdown", () => {
+      if (confirm("Delete this player?")) {
+        this.players.splice(index, 1);
+        this.savePlayers();
+        this.renderSlots();
+      }
+    });
+
+    container.add(sprite);
+    container.add(nameText);
+    container.add(posText);
+    container.add(ovrText);
+    container.add(selectBtn);
+    container.add(deleteBtn);
+  }
+
+  /* ----- create flow entry ----- */
+
+  startCreateFlow(slotIndex) {
+    if (this.players.length >= 3 && !this.players[slotIndex]) {
+      alert("All 3 slots are filled. Delete one to create a new player.");
+      return;
+    }
+    this.tempCreateData = {
+      slotIndex,
+      name: "Player",
+      position: "P",
+      throwHand: "R",
+      batHand: "R",
+      teamColor: "#2a6dd6",
+      hair: "short",
+      hairColor: "#222222",
+      facial: "none",
+      skin: "#f1c27d",
+      stats: {}
+    };
+    this.showBasicInfoPopup();
+  }
+
+  showPopup(htmlContent) {
+    this.cleanupDOM();
     const div = document.createElement("div");
-    div.className = "overlay-ui";
-    div.id = "profile-ui";
-    div.innerHTML = [
-      "<div><strong>Create Player</strong></div>",
-      '<div style="margin-top:6px;">Name:<input id="pname" value="Player" /></div>',
-      '<div style="margin-top:6px;">Handed:',
-      '<select id="phand"><option value="R">R</option><option value="L">L</option></select></div>',
-      '<div style="margin-top:6px;">Hair:',
-      '<select id="phair">',
-      '<option value="short">short</option>',
-      '<option value="long">long</option>',
-      '<option value="mohawk">mohawk</option>',
-      '<option value="bald">bald</option>',
-      '</select></div>',
-      '<div style="margin-top:6px;">Skin:<input id="pskin" type="color" value="#f1c27d" /></div>',
-      '<div style="margin-top:6px;">Team:<input id="pteam" type="color" value="#2a6dd6" /></div>',
-      '<div style="margin-top:8px;">',
-      '<button id="createPlayerBtn" class="small-btn">Create</button>',
-      '<button id="deleteAllBtn" class="small-btn">Delete All</button>',
-      "</div>"
-    ].join("");
-
+    div.id = "profile-popup-root";
+    div.style.position = "fixed";
+    div.style.left = "0";
+    div.style.top = "0";
+    div.style.width = "100%";
+    div.style.height = "100%";
+    div.style.background = "rgba(0,0,0,0.6)";
+    div.style.display = "flex";
+    div.style.alignItems = "center";
+    div.style.justifyContent = "center";
+    div.style.zIndex = "50";
+    div.style.fontFamily = "monospace";
+    div.innerHTML = htmlContent;
     document.body.appendChild(div);
-    this.profileUI = div;
+    this.popupRoot = div;
+  }
 
-    document.getElementById("createPlayerBtn").onclick = () => {
-      const name = document.getElementById("pname").value || "Player";
-      const handed = document.getElementById("phand").value;
-      const hair = document.getElementById("phair").value;
-      const skin = document.getElementById("pskin").value;
-      const teamColor = document.getElementById("pteam").value;
-      const player = makeNewPlayer(name, "P", handed, hair, skin, "none", teamColor);
-      this.players.push(player);
-      this.savePlayers();
-      localStorage.setItem("currentPlayer", JSON.stringify(player));
-      location.reload();
+  /* ----- STEP 1: BASIC INFO ----- */
+
+  showBasicInfoPopup() {
+    const data = this.tempCreateData;
+    const html = `
+      <div style="background:#102030;padding:16px;border-radius:10px;color:#fff;min-width:320px;max-width:420px;">
+        <div style="font-size:18px;margin-bottom:8px;">Create Player — Step 1/3</div>
+        <div style="margin-bottom:6px;">
+          Name:
+          <input id="cp_name" value="${data.name}" style="width:180px;margin-left:4px;" />
+        </div>
+        <div style="margin-bottom:6px;">
+          Position:
+          <select id="cp_pos" style="margin-left:4px;">
+            <option value="P">P</option>
+            <option value="C">C</option>
+            <option value="1B">1B</option>
+            <option value="2B">2B</option>
+            <option value="3B">3B</option>
+            <option value="SS">SS</option>
+            <option value="LF">LF</option>
+            <option value="CF">CF</option>
+            <option value="RF">RF</option>
+          </select>
+        </div>
+        <div style="margin-bottom:6px;">
+          Throw Hand:
+          <select id="cp_throw" style="margin-left:4px;">
+            <option value="R">R</option>
+            <option value="L">L</option>
+          </select>
+        </div>
+        <div id="cp_bat_row" style="margin-bottom:6px;">
+          Bat Hand:
+          <select id="cp_bat" style="margin-left:4px;">
+            <option value="R">R</option>
+            <option value="L">L</option>
+          </select>
+        </div>
+        <div style="margin-bottom:6px;">
+          Team Color:
+          <input id="cp_team" type="color" value="${data.teamColor}" />
+        </div>
+        <div style="margin-top:10px;display:flex;justify-content:flex-end;gap:8px;">
+          <button id="cp_cancel" class="small-btn">Cancel</button>
+          <button id="cp_next" class="small-btn">Continue</button>
+        </div>
+      </div>
+    `;
+    this.showPopup(html);
+
+    const posSel = document.getElementById("cp_pos");
+    const batRow = document.getElementById("cp_bat_row");
+
+    posSel.value = data.position || "P";
+
+    const updateBatVisibility = () => {
+      const v = posSel.value;
+      batRow.style.display = (v === "P") ? "none" : "block";
+    };
+    updateBatVisibility();
+    posSel.onchange = updateBatVisibility;
+
+    document.getElementById("cp_throw").value = data.throwHand || "R";
+    document.getElementById("cp_team").value = data.teamColor || "#2a6dd6";
+
+    document.getElementById("cp_cancel").onclick = () => {
+      this.tempCreateData = null;
+      this.cleanupDOM();
     };
 
-    document.getElementById("deleteAllBtn").onclick = () => {
-      if (confirm("Delete all saved players?")) {
-        localStorage.removeItem("players");
-        localStorage.removeItem("currentPlayer");
-        location.reload();
+    document.getElementById("cp_next").onclick = () => {
+      data.name = document.getElementById("cp_name").value || "Player";
+      data.position = document.getElementById("cp_pos").value;
+      data.throwHand = document.getElementById("cp_throw").value;
+      data.teamColor = document.getElementById("cp_team").value;
+      if (data.position === "P") {
+        data.batHand = data.throwHand;
+      } else {
+        data.batHand = document.getElementById("cp_bat").value;
+      }
+      this.showAttributePopup();
+    };
+  }
+
+  /* ----- STEP 2: ATTRIBUTES (Exact 60 OVR) ----- */
+
+  getStatKeysForPosition() {
+    const pos = this.tempCreateData.position;
+    if (pos === "P") {
+      return ["velocity", "movement", "control", "stamina"];
+    }
+    return ["contact", "power", "eye", "speed", "fielding"];
+  }
+
+  getTargetTotalForPosition() {
+    const pos = this.tempCreateData.position;
+    if (pos === "P") return 240; // 4 stats * 60
+    return 300;                   // 5 stats * 60
+  }
+
+  initPresetStats() {
+    const data = this.tempCreateData;
+    const pos = data.position;
+    const stats = {};
+    if (pos === "P") {
+      // Example preset totaling 240
+      stats.velocity = 65;
+      stats.movement = 58;
+      stats.control  = 57;
+      stats.stamina  = 60;
+    } else {
+      // Example preset totaling 300
+      stats.contact = 55;
+      stats.power   = 65;
+      stats.eye     = 58;
+      stats.speed   = 60;
+      stats.fielding= 62;
+    }
+    data.stats = stats;
+  }
+
+  showAttributePopup() {
+    const data = this.tempCreateData;
+    if (!data.stats || Object.keys(data.stats).length === 0) {
+      this.initPresetStats();
+    }
+    const keys = this.getStatKeysForPosition();
+    const targetTotal = this.getTargetTotalForPosition();
+
+    const rowsHtml = keys.map(k => {
+      const label = k.toUpperCase();
+      const val = data.stats[k];
+      return `
+        <div style="margin-bottom:6px;display:flex;align-items:center;gap:6px;">
+          <div style="width:90px;">${label}</div>
+          <button data-stat="${k}" data-dir="-1" class="small-btn">-</button>
+          <span id="stat_val_${k}">${val}</span>
+          <button data-stat="${k}" data-dir="1" class="small-btn">+</button>
+        </div>
+      `;
+    }).join("");
+
+    const html = `
+      <div style="background:#102030;padding:16px;border-radius:10px;color:#fff;min-width:320px;max-width:430px;">
+        <div style="font-size:18px;margin-bottom:8px;">Attributes — Step 2/3</div>
+        <div style="font-size:12px;margin-bottom:10px;">Adjust your stats. Average must be 60 (total ${targetTotal}).</div>
+        ${rowsHtml}
+        <div id="attr_total" style="margin-top:8px;font-size:14px;"></div>
+        <div id="attr_error" style="margin-top:4px;font-size:12px;color:#ff7777;"></div>
+        <div style="margin-top:10px;display:flex;justify-content:flex-end;gap:8px;">
+          <button id="attr_cancel" class="small-btn">Cancel</button>
+          <button id="attr_next" class="small-btn" disabled>Continue</button>
+        </div>
+      </div>
+    `;
+    this.showPopup(html);
+
+    const updateTotals = () => {
+      const stats = data.stats;
+      const total = keys.reduce((t, k) => t + stats[k], 0);
+      const ovr = this.previewOVRFromStats();
+      const totalEl = document.getElementById("attr_total");
+      const errEl = document.getElementById("attr_error");
+      const nextBtn = document.getElementById("attr_next");
+
+      totalEl.textContent = `Total: ${total} / ${targetTotal} • OVR: ${ovr}`;
+
+      if (total === targetTotal) {
+        errEl.textContent = "";
+        nextBtn.disabled = false;
+      } else if (total > targetTotal) {
+        errEl.textContent = "Too many points assigned. Lower some stats.";
+        nextBtn.disabled = true;
+      } else {
+        errEl.textContent = "You still have points left to assign.";
+        nextBtn.disabled = true;
       }
     };
+
+    const buttons = this.popupRoot.querySelectorAll("button[data-stat]");
+    buttons.forEach(btn => {
+      btn.onclick = () => {
+        const stat = btn.getAttribute("data-stat");
+        const dir = parseInt(btn.getAttribute("data-dir"), 10);
+        const current = data.stats[stat];
+        const newVal = current + dir;
+        if (newVal < 1) return;
+        if (newVal > 99) return;
+        data.stats[stat] = newVal;
+        document.getElementById("stat_val_" + stat).textContent = newVal;
+        updateTotals();
+      };
+    });
+
+    document.getElementById("attr_cancel").onclick = () => {
+      this.tempCreateData = null;
+      this.cleanupDOM();
+    };
+
+    document.getElementById("attr_next").onclick = () => {
+      this.showSpritePopup();
+    };
+
+    updateTotals();
   }
 
-  shutdown() {
-    if (this.profileUI) {
-      this.profileUI.remove();
-      this.profileUI = null;
+  previewOVRFromStats() {
+    const data = this.tempCreateData;
+    const pos = data.position;
+    const p = { position: pos };
+    const keys = this.getStatKeysForPosition();
+    keys.forEach(k => {
+      p[k] = data.stats[k];
+    });
+    return calculateOVR(p);
+  }
+
+  /* ----- STEP 3: SPRITE CREATOR ----- */
+
+  showSpritePopup() {
+    const data = this.tempCreateData;
+    const html = `
+      <div style="background:#102030;padding:16px;border-radius:10px;color:#fff;min-width:340px;max-width:460px;">
+        <div style="font-size:18px;margin-bottom:8px;">Appearance — Step 3/3</div>
+        <div style="margin-bottom:6px;">
+          Hair Style:
+          <select id="sp_hair">
+            <option value="short">short</option>
+            <option value="long">long</option>
+            <option value="mohawk">mohawk</option>
+            <option value="bald">bald</option>
+          </select>
+        </div>
+        <div style="margin-bottom:6px;">
+          Hair Color:
+          <input id="sp_hair_color" type="color" value="${data.hairColor}" />
+        </div>
+        <div style="margin-bottom:6px;">
+          Skin:
+          <input id="sp_skin" type="color" value="${data.skin}" />
+        </div>
+        <div style="margin-bottom:6px;">
+          Facial Hair:
+          <select id="sp_facial">
+            <option value="none">none</option>
+            <option value="mustache">mustache</option>
+            <option value="beard">beard</option>
+            <option value="goatee">goatee</option>
+          </select>
+        </div>
+        <div style="margin-bottom:6px;">
+          Team Color:
+          <input id="sp_team" type="color" value="${data.teamColor}" />
+        </div>
+        <div style="margin-top:10px;display:flex;justify-content:flex-end;gap:8px;">
+          <button id="sp_cancel" class="small-btn">Cancel</button>
+          <button id="sp_create" class="small-btn">Create Player</button>
+        </div>
+      </div>
+    `;
+    this.showPopup(html);
+
+    document.getElementById("sp_hair").value = data.hair || "short";
+    document.getElementById("sp_skin").value = data.skin || "#f1c27d";
+    document.getElementById("sp_team").value = data.teamColor || "#2a6dd6";
+
+    const applyAndPreview = () => {
+      data.hair = document.getElementById("sp_hair").value;
+      data.hairColor = document.getElementById("sp_hair_color").value;
+      data.skin = document.getElementById("sp_skin").value;
+      data.facial = document.getElementById("sp_facial").value;
+      data.teamColor = document.getElementById("sp_team").value;
+      this.updatePreviewSpriteFromTemp();
+    };
+
+    ["sp_hair", "sp_hair_color", "sp_skin", "sp_facial", "sp_team"].forEach(id => {
+      document.getElementById(id).onchange = applyAndPreview;
+    });
+
+    document.getElementById("sp_cancel").onclick = () => {
+      this.tempCreateData = null;
+      this.destroyPreviewSprite();
+      this.cleanupDOM();
+    };
+
+    document.getElementById("sp_create").onclick = () => {
+      this.finishCreatePlayer();
+    };
+
+    applyAndPreview();
+  }
+
+  updatePreviewSpriteFromTemp() {
+    const data = this.tempCreateData;
+    if (!data) return;
+
+    const cfg = {
+      id: "preview",
+      name: data.name,
+      position: data.position,
+      handedness: data.throwHand,
+      hair: data.hair,
+      hairColor: data.hairColor,
+      skin: data.skin,
+      facial: data.facial,
+      teamColor: data.teamColor,
+      role: data.position === "P" ? "pitcher" : "batter"
+    };
+
+    const key = this.generator.generateCharacterTexture(cfg);
+    const animKeys = this.generator.makeAnimationKeysFor(key);
+
+    if (!this.previewSprite) {
+      this.previewSprite = this.add.sprite(
+        this.cameras.main.width / 2,
+        this.cameras.main.height / 2 + 140,
+        key
+      ).setOrigin(0.5, 0.9).setScale(3).setDepth(30);
+    } else {
+      this.previewSprite.setTexture(key);
     }
+    this.previewSprite.play(animKeys.idle);
+  }
+
+  destroyPreviewSprite() {
+    if (this.previewSprite) {
+      this.previewSprite.destroy();
+      this.previewSprite = null;
+    }
+  }
+
+  /* ----- finalize create ----- */
+
+  finishCreatePlayer() {
+    const d = this.tempCreateData;
+    if (!d) return;
+
+    const player = {
+      id: "pl_" + Date.now() + "_" + Math.floor(Math.random() * 9999),
+      name: d.name,
+      position: d.position,
+      handedness: d.throwHand,
+      batHand: d.batHand,
+      hair: d.hair,
+      hairColor: d.hairColor,
+      skin: d.skin,
+      facial: d.facial,
+      teamColor: d.teamColor,
+      rarity: "common",
+      level: 1,
+      xp: 0,
+      xpToNextLevel: 10,
+      currency: 50,
+      unlockedMaxRarity: "common",
+      bossCount: 0,
+      perksApplied: {},
+      perksOwned: [],
+      pitches: {
+        fastball: 60,
+        slider: 55,
+        curveball: 55,
+        changeup: 55
+      }
+    };
+
+    // baseline attributes
+    player.velocity = 40;
+    player.movement = 40;
+    player.control  = 40;
+    player.stamina  = 40;
+    player.contact  = 40;
+    player.power    = 40;
+    player.eye      = 40;
+    player.speed    = 40;
+    player.fielding = 40;
+
+    // apply custom stats
+    const keys = this.getStatKeysForPosition();
+    keys.forEach(k => {
+      player[k] = d.stats[k];
+    });
+
+    ["velocity","movement","control","stamina",
+     "contact","power","eye","speed","fielding"].forEach(attr => {
+      player.perksApplied[attr] = 0;
+    });
+
+    player.ovr = calculateOVR(player);
+
+    const idx = d.slotIndex;
+    if (this.players[idx]) {
+      this.players[idx] = player;
+    } else {
+      this.players.push(player);
+    }
+    this.savePlayers();
+
+    localStorage.setItem("currentPlayer", JSON.stringify(player));
+
+    this.tempCreateData = null;
+    this.destroyPreviewSprite();
+    this.cleanupDOM();
+    this.renderSlots();
   }
 }
 
 /* ---------- GameScene (Main Gameplay) ---------- */
+
 class GameScene extends Phaser.Scene {
   constructor() {
     super({ key: "GameScene" });
@@ -758,10 +1273,8 @@ class GameScene extends Phaser.Scene {
       teamPlayers: []
     };
 
-    // background field color
     this.add.rectangle(0, 0, GAME_WIDTH * 2, GAME_HEIGHT * 2, 0x2f7f3c).setOrigin(0);
 
-    // defenders
     this.defenders = [];
     const defenderPositions = this.getDefenderPositions();
     for (let i = 0; i < 9; i++) {
@@ -776,7 +1289,6 @@ class GameScene extends Phaser.Scene {
       this.gameState.teamPlayers.push(clone);
     }
 
-    // pitcher
     const pClone = JSON.parse(JSON.stringify(this.currentPlayer));
     pClone.id = pClone.id + "_pitch";
     pClone.position = "P";
@@ -784,24 +1296,20 @@ class GameScene extends Phaser.Scene {
     this.pitcherObj = this.createPlayerSprite(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 60, pClone);
     this.gameState.teamPlayers.push(pClone);
 
-    // batter
     const bClone = JSON.parse(JSON.stringify(this.currentPlayer));
     bClone.id = bClone.id + "_batt";
     bClone.position = "B";
     bClone.role = "batter";
     this.batterObj = this.createPlayerSprite(GAME_WIDTH / 2, GAME_HEIGHT - 120, bClone);
 
-    // ball
     this.ball = this.add.circle(-50, -50, 4, 0xffffff).setVisible(false);
     this.physics.add.existing(this.ball);
     this.ball.body.setCircle(4);
 
-    // cameras
     this.cameras.main.setBounds(0, 0, GAME_WIDTH * 1.5, GAME_HEIGHT * 1.5);
     this.cameras.main.startFollow(this.batterObj.sprite, true, 0.08, 0.08);
     this.cameras.main.setZoom(1.0);
 
-    // UI
     this.createScorebug();
     this.createScoreLabel();
     this.createShopButton();
@@ -821,15 +1329,15 @@ class GameScene extends Phaser.Scene {
     const cx = GAME_WIDTH / 2;
     const cy = GAME_HEIGHT / 2 - 40;
     return [
-      { x: cx, y: cy - 130 },       // CF
-      { x: cx - 150, y: cy - 80 },  // LF
-      { x: cx + 150, y: cy - 80 },  // RF
-      { x: cx - 90, y: cy + 10 },   // 3B
-      { x: cx + 90, y: cy + 10 },   // 1B
-      { x: cx - 30, y: cy + 70 },   // SS
-      { x: cx + 30, y: cy + 70 },   // 2B
-      { x: cx - 30, y: cy + 120 },  // C-ish
-      { x: cx + 30, y: cy + 120 }   // extra inf
+      { x: cx, y: cy - 130 },
+      { x: cx - 150, y: cy - 80 },
+      { x: cx + 150, y: cy - 80 },
+      { x: cx - 90, y: cy + 10 },
+      { x: cx + 90, y: cy + 10 },
+      { x: cx - 30, y: cy + 70 },
+      { x: cx + 30, y: cy + 70 },
+      { x: cx - 30, y: cy + 120 },
+      { x: cx + 30, y: cy + 120 }
     ];
   }
 
@@ -907,7 +1415,11 @@ class GameScene extends Phaser.Scene {
     const bg = this.add.rectangle(0, 0, 280, 200, 0x000000, 0.65).setOrigin(0);
     this.cardContainer.add(bg);
 
-    const key = this.generator.generateCharacterTexture(this.currentPlayer);
+    const keyCfg = {
+      ...this.currentPlayer,
+      role: "pitcher"
+    };
+    const key = this.generator.generateCharacterTexture(keyCfg);
     const animKeys = this.generator.makeAnimationKeysFor(key);
 
     const sprite = this.add.sprite(50, 80, key).setOrigin(0.5).setScale(3);
@@ -968,12 +1480,11 @@ class GameScene extends Phaser.Scene {
 
     const pitcher = this.pitcherObj.cfg;
     const batter = this.batterObj.cfg;
-    const count = { balls: 0, strikes: 0 }; // simple for now
+    const count = { balls: 0, strikes: 0 };
     const runnersOn = 0;
 
     const result = resolveAtBat(pitcher, batter, count, runnersOn);
 
-    // simple animation of pitch
     const startX = this.pitcherObj.sprite.x;
     const startY = this.pitcherObj.sprite.y - 10;
     const midX = this.batterObj.sprite.x + randInt(-20, 20);
@@ -1012,7 +1523,6 @@ class GameScene extends Phaser.Scene {
       this.currentPlayer.currency += 3;
       this.showFloatingCoins("+3 coins");
       this.updateScoreLabel();
-      // simple: treat as single, just reset
       this.resetAfterPlay();
     } else if (outcome === "extraBaseHit") {
       this.currentPlayer.currency += 6;
@@ -1064,7 +1574,6 @@ class GameScene extends Phaser.Scene {
       this.gameState.inning++;
     }
 
-    // Open shop automatically between innings
     this.time.delayedCall(1200, () => {
       this.openShopBetweenPlays();
     });
@@ -1107,10 +1616,10 @@ class GameScene extends Phaser.Scene {
     this.scene.pause();
     this.scene.launch("ShopScene", { parentKey: "GameScene" });
   }
-
 }
 
 /* ---------- ShopScene ---------- */
+
 class ShopScene extends Phaser.Scene {
   constructor() {
     super({ key: "ShopScene" });
@@ -1160,7 +1669,6 @@ class ShopScene extends Phaser.Scene {
     if (this.uiContainer) this.uiContainer.destroy();
     this.uiContainer = this.add.container(0, 0);
 
-    // Card slots
     const startX = 60;
     const startY = 80;
     for (let i = 0; i < 3; i++) {
@@ -1187,7 +1695,6 @@ class ShopScene extends Phaser.Scene {
       this.uiContainer.add(price);
     }
 
-    // Pack slots
     const packStartX = 160;
     const packStartY = 240;
     for (let i = 0; i < 2; i++) {
@@ -1214,7 +1721,6 @@ class ShopScene extends Phaser.Scene {
       this.uiContainer.add(price);
     }
 
-    // Close / back
     const back = this.add.text(20, GAME_HEIGHT - 50, "Back", {
       font: "16px monospace",
       fill: "#00ffff",
@@ -1226,7 +1732,6 @@ class ShopScene extends Phaser.Scene {
     });
     this.uiContainer.add(back);
 
-    // preview player on right
     this.renderPlayerPreview();
   }
 
@@ -1238,7 +1743,11 @@ class ShopScene extends Phaser.Scene {
     this.previewContainer.add(bg);
 
     const gen = new PixelPlayerGenerator(this);
-    const key = gen.generateCharacterTexture(this.currentPlayer);
+    const keyCfg = {
+      ...this.currentPlayer,
+      role: "batter"
+    };
+    const key = gen.generateCharacterTexture(keyCfg);
     const animKeys = gen.makeAnimationKeysFor(key);
     const sprite = this.add.sprite(60, 80, key).setOrigin(0.5).setScale(3);
     sprite.play(animKeys.idle);
