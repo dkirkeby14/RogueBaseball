@@ -1,61 +1,60 @@
+/* Basic page layout */
+
 html, body {
   margin: 0;
   padding: 0;
-  height: 100%;
-  background: #0b2030;
+  background: #000000;
   color: #ffffff;
   font-family: monospace;
+  height: 100%;
 }
 
 #game-container {
-  width: 100%;
+  width: 100vw;
   height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
-/* Simple overlay UI for profile/shop panels (uses DOM) */
-.overlay-ui {
-  position: absolute;
-  left: 20px;
-  top: 20px;
-  background: rgba(0, 0, 0, 0.7);
-  padding: 10px;
-  border-radius: 8px;
-  color: #ffffff;
-  font-family: monospace;
-  z-index: 20;
-}
+/* Small utility button (used in popups) */
 
 .small-btn {
-  display: inline-block;
-  padding: 6px 10px;
-  margin: 4px 2px;
-  border-radius: 6px;
-  background: #2a596e;
-  border: none;
+  font-family: monospace;
+  font-size: 12px;
+  padding: 3px 8px;
+  margin-left: 4px;
+  background: #222222;
   color: #ffffff;
+  border: 1px solid #555555;
   cursor: pointer;
 }
 
 .small-btn:hover {
-  background: #357b93;
+  background: #444444;
 }
 
-.overlay-ui input,
-.overlay-ui select {
-  font-family: monospace;
-  margin-left: 4px;
-}
+/* Floating coin feedback text (GameScene.showFloatingCoins) */
 
-/* Tooltip / floating text used for coin feedback */
 .floating-text {
-  position: absolute;
-  color: #00ff00;
-  background: #000000;
-  padding: 4px 6px;
-  border-radius: 4px;
-  font-size: 14px;
+  position: fixed;
+  z-index: 100;
+  font-family: monospace;
+  font-size: 16px;
+  color: #ffff55;
   pointer-events: none;
+}
+
+/* Old overlay-ui style (kept in case it's referenced later) */
+
+.overlay-ui {
+  position: fixed;
+  right: 10px;
+  bottom: 10px;
+  background: rgba(0, 0, 0, 0.8);
+  color: #ffffff;
+  padding: 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  z-index: 20;
 }
