@@ -143,17 +143,24 @@ class PixelPlayerGenerator {
   }
 
   keyFor(cfg) {
-    return [
-      "char",
-      cfg.id || cfg.name || "anon",
-      cfg.position || "X",
-      cfg.handedness || "R",
-      cfg.skin || "skin",
-      cfg.hair || "hair",
-      cfg.facial || "face",
-      cfg.teamColor || "team"
-    ].join("_");
+  function clean(str, fallback) {
+    const s = (str || fallback || "").toString();
+    // Remove everything except letters and numbers to keep texture keys safe
+    return s.replace(/[^a-zA-Z0-9]/g, "");
   }
+
+  return [
+    "char",
+    clean(cfg.id || cfg.name, "anon"),
+    clean(cfg.position, "X"),
+    clean(cfg.handedness, "R"),
+    clean(cfg.skin, "skin"),
+    clean(cfg.hair, "hair"),
+    clean(cfg.hairColor, "hc"),
+    clean(cfg.facial, "face"),
+    clean(cfg.teamColor, "team")
+  ].join("_");
+}
 
   makeAnimationKeysFor(key) {
     return {
@@ -204,14 +211,24 @@ class PixelPlayerGenerator {
         const sx = c * this.baseW;
         const sy = r * this.baseH;
         const frameCanvas = document.createElement("canvas");
-        frameCanvas.width = this.baseW;
-        frameCanvas.height = this.baseH;
-        const fctx = frameCanvas.getContext("2d");
-        fctx.imageSmoothingEnabled = false;
-        fctx.drawImage(canvas, sx, sy, this.baseW, this.baseH, 0, 0, this.baseW, this.baseH);
-        const frameKey = key + "_f" + index++;
-        this.scene.textures.addBase64(frameKey, frameCanvas.toDataURL());
-        framesMap[action].push({ key: frameKey });
+frameCanvas.width = this.baseW;
+frameCanvas.height = this.baseH;
+const fctx = frameCanvas.getContext("2d");
+fctx.imageSmoothingEnabled = false;
+fctx.drawImage(canvas, sx, sy, this.baseW, this.baseH, 0, 0, this.baseW, this.baseH);
+
+const frameKey = key + "_f" + index++;
+
+// If this frameKey already exists for some reason, remove it first
+if (this.scene.textures.exists(frameKey)) {
+  this.scene.textures.remove(frameKey);
+}
+
+// Register this frame directly from the canvas (more reliable than Base64)
+this.scene.textures.addCanvas(frameKey, frameCanvas);
+
+framesMap[action].push({ key: frameKey });
+
       }
     }
 
