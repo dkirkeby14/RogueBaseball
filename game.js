@@ -43,6 +43,34 @@ function computeOverall(player) {
   return Math.round(sum / count);
 }
 
+// Rarity → overall range
+const RARITY_OVR_RANGES = {
+  common: [50, 59],
+  bronze: [60, 69],
+  silver: [70, 79],
+  gold: [80, 89],
+  diamond: [90, 98],
+  blackDiamond: [99, 99]
+};
+
+function getOvrRangeForRarity(rarity) {
+  const r = RARITY_OVR_RANGES[rarity];
+  return r ? r.slice() : [50, 59];
+}
+
+function shuffleArray(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = randInt(0, i);
+    const tmp = arr[i];
+    arr[i] = arr[j];
+    arr[j] = tmp;
+  }
+}
+
+function isPitcherPosition(pos) {
+  return pos === "P";
+}
+
 
 
 // NEW: Overall rating helper (used everywhere for OVR)
@@ -637,6 +665,185 @@ function openPack(packSlot, playerState) {
 }
 
 /* ================================
+   CHAOTIC ATTRIBUTE GENERATION
+================================= */
+
+function generateBaseAttributes(attrKeys, targetOvr) {
+  const attrs = {};
+  attrKeys.forEach(k => {
+    attrs[k] = clampAttr(randInt(targetOvr - 5, targetOvr + 5));
+  });
+  balanceAttributesToOvr(attrs, targetOvr);
+  return attrs;
+}
+
+function balanceAttributesToOvr(attrs, targetOvr) {
+  const keys = Object.keys(attrs);
+  const n = keys.length;
+  const targetSum = targetOvr * n;
+
+  let sum = 0;
+  keys.forEach(k => { sum += attrs[k]; });
+
+  let diff = Math.round(targetSum - sum);
+  let safety = 0;
+
+  while (diff !== 0 && safety < 1000) {
+    const idx = randInt(0, n - 1);
+    const key = keys[idx];
+    const val = attrs[key];
+
+    if (diff > 0) {
+      if (val >= 99) {
+        safety++;
+        continue;
+      }
+      attrs[key] = val + 1;
+      diff--;
+    } else {
+      if (val <= 1) {
+        safety++;
+        continue;
+      }
+      attrs[key] = val - 1;
+      diff++;
+    }
+    safety++;
+  }
+}
+
+function applyVarianceModel(attrs, targetOvr) {
+  const keys = Object.keys(attrs);
+  const n = keys.length;
+  if (n === 0) return attrs;
+
+  const roll = Math.random();
+
+  // CHAOS: 1% chance
+  if (roll < 0.01 && n >= 3) {
+    const spikeIdx = randInt(0, n - 1);
+    let tankIdx1 = spikeIdx;
+    let tankIdx2 = spikeIdx;
+    while (tankIdx1 === spikeIdx) tankIdx1 = randInt(0, n - 1);
+    while (tankIdx2 === spikeIdx || tankIdx2 === tankIdx1) tankIdx2 = randInt(0, n - 1);
+
+    const spikeKey = keys[spikeIdx];
+    const tankKey1 = keys[tankIdx1];
+    const tankKey2 = keys[tankIdx2];
+
+    attrs[spikeKey] = clampAttr(randInt(Math.max(95, targetOvr), 99));
+    attrs[tankKey1] = clampAttr(randInt(15, 35));
+    attrs[tankKey2] = clampAttr(randInt(15, 35));
+
+    balanceAttributesToOvr(attrs, targetOvr);
+    return attrs;
+  }
+
+  // Double spike: additional 5% (total 6%)
+  if (roll < 0.06 && n >= 2) {
+    let idx1 = 0;
+    let idx2 = 0;
+    while (idx2 === idx1) idx2 = randInt(0, n - 1);
+
+    const key1 = keys[idx1];
+    const key2 = keys[idx2];
+
+    attrs[key1] = clampAttr(attrs[key1] + randInt(8, 15));
+    attrs[key2] = clampAttr(attrs[key2] + randInt(8, 15));
+
+    balanceAttributesToOvr(attrs, targetOvr);
+    return attrs;
+  }
+
+  // Spike/Tank: next 10% (total 16%)
+  if (roll < 0.16 && n >= 2) {
+    const spikeIdx = randInt(0, n - 1);
+    let tankIdx = spikeIdx;
+    while (tankIdx === spikeIdx) tankIdx = randInt(0, n - 1);
+
+    const spikeKey = keys[spikeIdx];
+    const tankKey = keys[tankIdx];
+
+    const spikeBoost = randInt(10, 20);
+    attrs[spikeKey] = clampAttr(attrs[spikeKey] + spikeBoost);
+    attrs[tankKey] = clampAttr(attrs[tankKey] - spikeBoost);
+
+    balanceAttributesToOvr(attrs, targetOvr);
+    return attrs;
+  }
+
+  // Most players: just slightly noisy balanced stats
+  balanceAttributesToOvr(attrs, targetOvr);
+  return attrs;
+}
+
+function generateRandomDraftPlayer(position, rarity) {
+  const [minOvr, maxOvr] = getOvrRangeForRarity(rarity);
+  const targetOvr = randInt(minOvr, maxOvr);
+  const pitcher = isPitcherPosition(position);
+
+  const hitterAttrs = ["contact", "power", "eye", "speed", "fielding"];
+  const pitcherAttrs = ["velocity", "movement", "control", "stamina"];
+  const keys = pitcher ? pitcherAttrs : hitterAttrs;
+
+  let attrs = generateBaseAttributes(keys, targetOvr);
+  attrs = applyVarianceModel(attrs, targetOvr);
+
+  const name = "Player " + randInt(100, 999);
+
+  const hairStyles = ["short", "long", "mohawk", "bald"];
+  const facialStyles = ["none", "mustache", "beard", "goatee"];
+  const hairColors = ["#222222", "#8b4513", "#d2b48c", "#ffa500"];
+  const skinColors = ["#f1c27d", "#e0ac69", "#c68642", "#8d5524"];
+  const teamColors = ["#2a6dd6", "#b22222", "#228b22", "#8b008b", "#ff8c00", "#444444"];
+
+  const hair = hairStyles[randInt(0, hairStyles.length - 1)];
+  const facial = facialStyles[randInt(0, facialStyles.length - 1)];
+  const hairColor = hairColors[randInt(0, hairColors.length - 1)];
+  const skin = skinColors[randInt(0, skinColors.length - 1)];
+  const teamColor = teamColors[randInt(0, teamColors.length - 1)];
+
+  const throwHand = Math.random() < 0.5 ? "R" : "L";
+  let batHand;
+  if (pitcher) {
+    batHand = Math.random() < 0.5 ? "R" : "L";
+  } else {
+    const r = Math.random();
+    if (r < 0.1) batHand = "S";
+    else if (r < 0.55) batHand = "R";
+    else batHand = "L";
+  }
+
+  // Start from base player structure, then override
+  const base = makeNewPlayer(
+    name,
+    position,
+    batHand,
+    hair,
+    skin,
+    facial,
+    teamColor
+  );
+
+  base.throwHand = throwHand;
+  base.batHand = batHand;
+  base.handedness = pitcher ? throwHand : batHand;
+  base.hairColor = hairColor;
+  base.skin = skin;
+  base.teamColor = teamColor;
+  base.position = position;
+  base.role = pitcher ? "pitcher" : "batter";
+  base.rarity = rarity;
+
+  keys.forEach(k => {
+    base[k] = attrs[k];
+  });
+
+  base.overall = computeOverall(base);
+  return base;
+}
+
+/* ================================
    SCENES
 ================================= */
 
@@ -749,7 +956,7 @@ class ProfileScene extends Phaser.Scene {
 
         const playBtn = this.makeButton(x + 16, y + 70, "Play", () => {
           localStorage.setItem("currentPlayer", JSON.stringify(player));
-          this.scene.start("GameScene");
+          this.scene.start("DraftScene");
         });
 
         const deleteBtn = this.makeButton(x + 100, y + 70, "Delete", () => {
@@ -1010,16 +1217,18 @@ class CreatePlayerScene extends Phaser.Scene {
       backgroundColor: "#222222",
       padding: { x: 4, y: 2 }
     }).setInteractive();
-    batVal.on("pointerdown", () => {
-      const opts = [
-        { label: "Right (R)", value: "R" },
-        { label: "Left (L)", value: "L" }
-      ];
-      this.showOptionPopup("Select Bat Hand", opts, (choice) => {
-        this.config.batHand = choice;
-        batVal.setText("BAT: " + choice);
-      });
-    });
+   batVal.on("pointerdown", () => {
+  const opts = [
+    { label: "Right (R)", value: "R" },
+    { label: "Left (L)", value: "L" },
+    { label: "Switch (S)", value: "S" }
+  ];
+  this.showOptionPopup("Select Bat Hand", opts, (choice) => {
+    this.config.batHand = choice;
+    batVal.setText("BAT: " + choice);
+  });
+});
+
     this.stepContainer.add(batVal);
 
     // Hair style
@@ -1540,10 +1749,213 @@ class CreatePlayerScene extends Phaser.Scene {
     localStorage.setItem("currentPlayer", JSON.stringify(base));
 
     // start game with this profile
-    this.scene.start("GameScene");
+    this.scene.start("DraftScene");
   }
 }
 
+/* ---------- DraftScene ---------- */
+class DraftScene extends Phaser.Scene {
+  constructor() {
+    super({ key: "DraftScene" });
+    this.draftState = null;
+    this.roundContainer = null;
+    this.generator = null;
+  }
+
+  create() {
+    this.generator = new PixelPlayerGenerator(this);
+
+    try {
+      this.currentPlayer = JSON.parse(localStorage.getItem("currentPlayer") || "null");
+    } catch (e) {
+      this.currentPlayer = null;
+    }
+
+    if (!this.currentPlayer) {
+      this.scene.start("ProfileScene");
+      return;
+    }
+
+    this.buildDraftState();
+    this.renderRound();
+  }
+
+  buildDraftState() {
+    // full roster template (13 spots)
+    const fullPositions = ["P", "P", "P", "P", "C", "1B", "2B", "3B", "SS", "LF", "CF", "RF", "DH"];
+
+    const positions = fullPositions.slice();
+    // remove one instance of created player's position
+    const idx = positions.indexOf(this.currentPlayer.position);
+    if (idx !== -1) positions.splice(idx, 1);
+
+    // Now 12 positions remain
+    shuffleArray(positions);
+
+    // rarity pool: 1 diamond, 1 gold, 2 silver, 2 bronze, 6 common
+    const rarities = [
+      "diamond",
+      "gold",
+      "silver", "silver",
+      "bronze", "bronze",
+      "common", "common", "common", "common", "common", "common"
+    ];
+    shuffleArray(rarities);
+
+    this.draftState = {
+      positions: positions,  // length 12
+      rarities: rarities,    // length 12
+      round: 0,
+      roster: [this.currentPlayer] // created player already on roster
+    };
+  }
+
+  clearRound() {
+    if (this.roundContainer) {
+      this.roundContainer.destroy();
+      this.roundContainer = null;
+    }
+  }
+
+  renderRound() {
+    this.clearRound();
+
+    const ds = this.draftState;
+    const totalRounds = ds.positions.length;
+
+    if (ds.round >= totalRounds) {
+      this.finishDraft();
+      return;
+    }
+
+    const pos = ds.positions[ds.round];
+    const rarity = ds.rarities[ds.round];
+
+    const w = this.cameras.main.width;
+    const h = this.cameras.main.height;
+
+    this.roundContainer = this.add.container(0, 0);
+
+    this.add.rectangle(0, 0, w * 2, h * 2, 0x0b2430).setOrigin(0);
+
+    const header = this.add.text(w / 2, 40,
+      `Draft Round ${ds.round + 1} / ${totalRounds}`,
+      { font: "24px monospace", fill: "#ffffff" }
+    ).setOrigin(0.5);
+    this.roundContainer.add(header);
+
+    const subheader = this.add.text(w / 2, 80,
+      `Position: ${pos}    Rarity: ${rarity.toUpperCase()}`,
+      { font: "18px monospace", fill: "#d0f0ff" }
+    ).setOrigin(0.5);
+    this.roundContainer.add(subheader);
+
+    // Generate 3 candidates
+    this.currentOptions = [
+      generateRandomDraftPlayer(pos, rarity),
+      generateRandomDraftPlayer(pos, rarity),
+      generateRandomDraftPlayer(pos, rarity)
+    ];
+
+    const startX = 80;
+    const startY = 140;
+    const cardW = 280;
+    const cardH = 320;
+    const gapX = 320;
+
+    this.currentOptions.forEach((p, i) => {
+      const x = startX + i * gapX;
+      const y = startY;
+
+      const panel = this.add.rectangle(x, y, cardW, cardH, 0x000000, 0.8)
+        .setOrigin(0)
+        .setStrokeStyle(2, 0xffffff);
+      this.roundContainer.add(panel);
+
+      // sprite
+      const key = this.generator.generateCharacterTexture(p);
+      const animKeys = this.generator.makeAnimationKeysFor(key);
+      const sprite = this.add.sprite(x + cardW / 2, y + 90, key).setOrigin(0.5).setScale(2.5);
+      sprite.play(animKeys.idle);
+      this.roundContainer.add(sprite);
+
+      const nameText = this.add.text(x + 10, y + 10,
+        `${p.name} (${p.position})`,
+        { font: "14px monospace", fill: "#ffffff" }
+      );
+      this.roundContainer.add(nameText);
+
+      const ovrText = this.add.text(x + 10, y + 30,
+        `OVR: ${p.overall}   ${p.rarity.toUpperCase()}`,
+        { font: "14px monospace", fill: "#ffffaa" }
+      );
+      this.roundContainer.add(ovrText);
+
+      if (isPitcherPosition(p.position)) {
+        const lines = [
+          `VEL: ${p.velocity}`,
+          `MOV: ${p.movement}`,
+          `CTL: ${p.control}`,
+          `STA: ${p.stamina}`
+        ];
+        lines.forEach((ln, idx) => {
+          const t = this.add.text(x + 10, y + 140 + idx * 18, ln, {
+            font: "14px monospace",
+            fill: "#d0f0ff"
+          });
+          this.roundContainer.add(t);
+        });
+      } else {
+        const lines = [
+          `CON: ${p.contact}`,
+          `POW: ${p.power}`,
+          `EYE: ${p.eye}`,
+          `SPD: ${p.speed}`,
+          `FLD: ${p.fielding}`
+        ];
+        lines.forEach((ln, idx) => {
+          const t = this.add.text(x + 10, y + 140 + idx * 18, ln, {
+            font: "14px monospace",
+            fill: "#d0f0ff"
+          });
+          this.roundContainer.add(t);
+        });
+      }
+
+      const pickBtn = this.add.text(x + cardW / 2, y + cardH - 30, "Select", {
+        font: "16px monospace",
+        fill: "#00ff00",
+        backgroundColor: "#111111",
+        padding: { x: 6, y: 4 }
+      }).setOrigin(0.5).setInteractive();
+
+      pickBtn.on("pointerdown", () => {
+        this.pickPlayer(p);
+      });
+
+      this.roundContainer.add(pickBtn);
+    });
+
+    // small roster count
+    const rosterText = this.add.text(w - 260, h - 40,
+      `Roster size: ${ds.roster.length} / 13`,
+      { font: "16px monospace", fill: "#ffffff" }
+    ).setScrollFactor(0);
+    this.roundContainer.add(rosterText);
+  }
+
+  pickPlayer(player) {
+    this.draftState.roster.push(player);
+    this.draftState.round++;
+    this.renderRound();
+  }
+
+  finishDraft() {
+    // Should now have 13 players including created player
+    localStorage.setItem("currentRoster", JSON.stringify(this.draftState.roster));
+    this.scene.start("GameScene");
+  }
+}
 
 
 /* ---------- GameScene (Main Gameplay) ---------- */
@@ -2347,7 +2759,8 @@ const config = {
     default: "arcade",
     arcade: { debug: false }
   },
-    scene: [BootScene, TitleScene, ProfileScene, CreatePlayerScene, GameScene, ShopScene]
+     scene: [BootScene, TitleScene, ProfileScene, CreatePlayerScene, DraftScene, GameScene, ShopScene]
+
 };
 
 const game = new Phaser.Game(config);
