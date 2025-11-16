@@ -22,17 +22,15 @@ function rarityIndex(name) {
   return idx === -1 ? 0 : idx;
 }
 function computeOverall(player) {
-  const attrs = [
-    "velocity",
-    "movement",
-    "control",
-    "stamina",
-    "contact",
-    "power",
-    "eye",
-    "speed",
-    "fielding"
-  ];
+  // For pitchers, only use pitching attributes
+  let attrs;
+  if (player && player.position === "P") {
+    attrs = ["velocity", "movement", "control", "stamina"];
+  } else {
+    // For everyone else, use hitter attributes
+    attrs = ["contact", "power", "eye", "speed", "fielding"];
+  }
+
   let sum = 0;
   let count = 0;
   attrs.forEach(a => {
@@ -44,6 +42,7 @@ function computeOverall(player) {
   if (count === 0) return 60;
   return Math.round(sum / count);
 }
+
 
 
 // NEW: Overall rating helper (used everywhere for OVR)
@@ -818,10 +817,12 @@ class ProfileScene extends Phaser.Scene {
   }
 }
 /* ---------- CreatePlayerScene (3-step creator) ---------- */
+/* ---------- CreatePlayerScene (3-step creator, improved) ---------- */
 class CreatePlayerScene extends Phaser.Scene {
   constructor() {
     super({ key: "CreatePlayerScene" });
     this.step = 1;
+    this.optionPopup = null;
   }
 
   init(data) {
@@ -834,14 +835,13 @@ class CreatePlayerScene extends Phaser.Scene {
       throwHand: "R",
       batHand: "R",
       hair: "short",
+      hairColor: "#222222",
       facial: "none",
       skin: "#f1c27d",
       teamColor: "#2a6dd6"
     };
 
-    // 60 overall target: 9 stats * 60
-    this.targetTotal = 9 * 60;
-
+    // full stat object; step 2 will only use a subset based on position
     this.stats = {
       contact: 60,
       power: 60,
@@ -854,23 +854,35 @@ class CreatePlayerScene extends Phaser.Scene {
       stamina: 60
     };
 
-    // Preset spreads (all sum to 540)
-    this.presets = {
+    // Presets split between pitchers and hitters
+    // All presets sum to 60 * number_of_relevant_stats
+    this.pitcherPresets = {
       balanced: {
-        contact: 60, power: 60, eye: 60, speed: 60, fielding: 60,
         velocity: 60, movement: 60, control: 60, stamina: 60
       },
-      powerBat: {
-        contact: 55, power: 80, eye: 55, speed: 50, fielding: 55,
-        velocity: 55, movement: 55, control: 55, stamina: 80
-      },
       acePitcher: {
-        contact: 45, power: 45, eye: 55, speed: 55, fielding: 60,
-        velocity: 70, movement: 75, control: 75, stamina: 60
+        velocity: 65, movement: 60, control: 65, stamina: 50  // total 240
+      },
+      controlSpecialist: {
+        velocity: 55, movement: 60, control: 80, stamina: 45  // 240
+      },
+      powerArm: {
+        velocity: 80, movement: 65, control: 45, stamina: 50  // 240
+      }
+    };
+
+    this.hitterPresets = {
+      balanced: {
+        contact: 60, power: 60, eye: 60, speed: 60, fielding: 60
+      },
+      powerBat: {
+        contact: 55, power: 80, eye: 55, speed: 50, fielding: 60  // 300
       },
       speedster: {
-        contact: 70, power: 45, eye: 60, speed: 80, fielding: 60,
-        velocity: 50, movement: 50, control: 55, stamina: 70
+        contact: 70, power: 40, eye: 55, speed: 80, fielding: 55  // 300
+      },
+      contactHitter: {
+        contact: 80, power: 45, eye: 70, speed: 60, fielding: 45  // 300
       }
     };
   }
@@ -902,6 +914,7 @@ class CreatePlayerScene extends Phaser.Scene {
     this.errorText.setText("");
   }
 
+  /* ---------- STEP 1: Basics ---------- */
   showStep1() {
     this.step = 1;
     this.clearStep();
@@ -911,24 +924,24 @@ class CreatePlayerScene extends Phaser.Scene {
     const cx = w / 2;
     const cy = h / 2;
 
-    const panel = this.add.rectangle(cx, cy, 640, 360, 0x000000, 0.85)
+    const panel = this.add.rectangle(cx, cy, 640, 380, 0x000000, 0.85)
       .setStrokeStyle(2, 0xffffff);
     this.stepContainer.add(panel);
 
-    const header = this.add.text(cx, cy - 150, "Step 1: Basics", {
+    const header = this.add.text(cx, cy - 160, "Step 1: Basics", {
       font: "22px monospace",
       fill: "#ffffff"
     }).setOrigin(0.5);
     this.stepContainer.add(header);
 
     // Name
-    const nameLabel = this.add.text(cx - 260, cy - 100, "Name:", {
+    const nameLabel = this.add.text(cx - 260, cy - 110, "Name:", {
       font: "16px monospace",
       fill: "#ffffff"
     });
     this.stepContainer.add(nameLabel);
 
-    const nameValue = this.add.text(cx - 160, cy - 100, this.config.name, {
+    const nameValue = this.add.text(cx - 160, cy - 110, this.config.name, {
       font: "16px monospace",
       fill: "#ffffaa",
       backgroundColor: "#222222",
@@ -943,152 +956,177 @@ class CreatePlayerScene extends Phaser.Scene {
     });
     this.stepContainer.add(nameValue);
 
-    // Position cycle
+    // Position (popup list)
     const positions = ["P", "C", "1B", "2B", "3B", "SS", "LF", "CF", "RF", "DH"];
-    const posLabel = this.add.text(cx - 260, cy - 60, "Position:", {
+    const posLabel = this.add.text(cx - 260, cy - 70, "Position:", {
       font: "16px monospace",
       fill: "#ffffff"
     });
     this.stepContainer.add(posLabel);
 
-    const posValue = this.add.text(cx - 160, cy - 60, this.config.position, {
+    const posValue = this.add.text(cx - 160, cy - 70, this.config.position, {
       font: "16px monospace",
       fill: "#ffffaa",
       backgroundColor: "#222222",
       padding: { x: 4, y: 2 }
     }).setInteractive();
     posValue.on("pointerdown", () => {
-      const idx = positions.indexOf(this.config.position);
-      const next = (idx + 1) % positions.length;
-      this.config.position = positions[next];
-      posValue.setText(this.config.position);
+      const opts = positions.map(p => ({ label: p, value: p }));
+      this.showOptionPopup("Select Position", opts, (choice) => {
+        this.config.position = choice;
+        posValue.setText(choice);
+      });
     });
     this.stepContainer.add(posValue);
 
-    // Handedness
-    const handLabel = this.add.text(cx - 260, cy - 20, "Throw / Bat:", {
+    // Throw / Bat (popup)
+    const handLabel = this.add.text(cx - 260, cy - 30, "Throw / Bat:", {
       font: "16px monospace",
       fill: "#ffffff"
     });
     this.stepContainer.add(handLabel);
 
-    const throwVal = this.add.text(cx - 140, cy - 20, "THR: " + this.config.throwHand, {
+    const throwVal = this.add.text(cx - 140, cy - 30, "THR: " + this.config.throwHand, {
       font: "16px monospace",
       fill: "#ffffaa",
       backgroundColor: "#222222",
       padding: { x: 4, y: 2 }
     }).setInteractive();
     throwVal.on("pointerdown", () => {
-      this.config.throwHand = this.config.throwHand === "R" ? "L" : "R";
-      throwVal.setText("THR: " + this.config.throwHand);
+      const opts = [
+        { label: "Right (R)", value: "R" },
+        { label: "Left (L)", value: "L" }
+      ];
+      this.showOptionPopup("Select Throw Hand", opts, (choice) => {
+        this.config.throwHand = choice;
+        throwVal.setText("THR: " + choice);
+      });
     });
     this.stepContainer.add(throwVal);
 
-    const batVal = this.add.text(cx + 10, cy - 20, "BAT: " + this.config.batHand, {
+    const batVal = this.add.text(cx + 10, cy - 30, "BAT: " + this.config.batHand, {
       font: "16px monospace",
       fill: "#ffffaa",
       backgroundColor: "#222222",
       padding: { x: 4, y: 2 }
     }).setInteractive();
     batVal.on("pointerdown", () => {
-      this.config.batHand = this.config.batHand === "R" ? "L" : "R";
-      batVal.setText("BAT: " + this.config.batHand);
+      const opts = [
+        { label: "Right (R)", value: "R" },
+        { label: "Left (L)", value: "L" }
+      ];
+      this.showOptionPopup("Select Bat Hand", opts, (choice) => {
+        this.config.batHand = choice;
+        batVal.setText("BAT: " + choice);
+      });
     });
     this.stepContainer.add(batVal);
 
     // Hair style
     const hairStyles = ["short", "long", "mohawk", "bald"];
-    const hairLabel = this.add.text(cx - 260, cy + 20, "Hair:", {
+    const hairLabel = this.add.text(cx - 260, cy + 10, "Hair:", {
       font: "16px monospace",
       fill: "#ffffff"
     });
     this.stepContainer.add(hairLabel);
 
-    const hairVal = this.add.text(cx - 160, cy + 20, this.config.hair, {
+    const hairVal = this.add.text(cx - 160, cy + 10, this.config.hair, {
       font: "16px monospace",
       fill: "#ffffaa",
       backgroundColor: "#222222",
       padding: { x: 4, y: 2 }
     }).setInteractive();
     hairVal.on("pointerdown", () => {
-      const idx = hairStyles.indexOf(this.config.hair);
-      const next = (idx + 1) % hairStyles.length;
-      this.config.hair = hairStyles[next];
-      hairVal.setText(this.config.hair);
+      const opts = hairStyles.map(h => ({ label: h, value: h }));
+      this.showOptionPopup("Select Hair Style", opts, (choice) => {
+        this.config.hair = choice;
+        hairVal.setText(choice);
+      });
     });
     this.stepContainer.add(hairVal);
 
     // Facial hair
     const facialStyles = ["none", "mustache", "beard", "goatee"];
-    const facialLabel = this.add.text(cx - 260, cy + 60, "Facial Hair:", {
+    const facialLabel = this.add.text(cx - 260, cy + 50, "Facial Hair:", {
       font: "16px monospace",
       fill: "#ffffff"
     });
     this.stepContainer.add(facialLabel);
 
-    const facialVal = this.add.text(cx - 160, cy + 60, this.config.facial, {
+    const facialVal = this.add.text(cx - 160, cy + 50, this.config.facial, {
       font: "16px monospace",
       fill: "#ffffaa",
       backgroundColor: "#222222",
       padding: { x: 4, y: 2 }
     }).setInteractive();
     facialVal.on("pointerdown", () => {
-      const idx = facialStyles.indexOf(this.config.facial);
-      const next = (idx + 1) % facialStyles.length;
-      this.config.facial = facialStyles[next];
-      facialVal.setText(this.config.facial);
+      const opts = facialStyles.map(f => ({ label: f, value: f }));
+      this.showOptionPopup("Select Facial Hair", opts, (choice) => {
+        this.config.facial = choice;
+        facialVal.setText(choice);
+      });
     });
     this.stepContainer.add(facialVal);
 
-    // Skin & Team color cycles (predefined palette)
+    // Skin & Team color (palette list)
     const skinColors = ["#f1c27d", "#e0ac69", "#c68642", "#8d5524"];
-    const teamColors = ["#2a6dd6", "#b22222", "#228b22", "#8b008b", "#ff8c00"];
+    const teamColors = ["#2a6dd6", "#b22222", "#228b22", "#8b008b", "#ff8c00", "#444444"];
 
-    const skinLabel = this.add.text(cx + 40, cy - 100, "Skin:", {
+    const skinLabel = this.add.text(cx + 40, cy - 110, "Skin:", {
       font: "16px monospace",
       fill: "#ffffff"
     });
     this.stepContainer.add(skinLabel);
 
-    const skinVal = this.add.text(cx + 120, cy - 100, "Tap", {
+    const skinVal = this.add.text(cx + 120, cy - 110, "Tap", {
       font: "16px monospace",
       fill: "#ffffaa",
       backgroundColor: this.config.skin,
       padding: { x: 10, y: 6 }
     }).setInteractive();
     skinVal.on("pointerdown", () => {
-      const idx = skinColors.indexOf(this.config.skin);
-      const next = (idx + 1) % skinColors.length;
-      this.config.skin = skinColors[next];
-      skinVal.setBackgroundColor(this.config.skin);
+      const opts = skinColors.map((c, idx) => ({
+        label: "Tone " + (idx + 1),
+        value: c,
+        color: c
+      }));
+      this.showOptionPopup("Select Skin Tone", opts, (choice) => {
+        this.config.skin = choice;
+        skinVal.setBackgroundColor(choice);
+      });
     });
     this.stepContainer.add(skinVal);
 
-    const teamLabel = this.add.text(cx + 40, cy - 60, "Team Color:", {
+    const teamLabel = this.add.text(cx + 40, cy - 70, "Team Color:", {
       font: "16px monospace",
       fill: "#ffffff"
     });
     this.stepContainer.add(teamLabel);
 
-    const teamVal = this.add.text(cx + 160, cy - 60, "Tap", {
+    const teamVal = this.add.text(cx + 160, cy - 70, "Tap", {
       font: "16px monospace",
       fill: "#ffffaa",
       backgroundColor: this.config.teamColor,
       padding: { x: 10, y: 6 }
     }).setInteractive();
     teamVal.on("pointerdown", () => {
-      const idx = teamColors.indexOf(this.config.teamColor);
-      const next = (idx + 1) % teamColors.length;
-      this.config.teamColor = teamColors[next];
-      teamVal.setBackgroundColor(this.config.teamColor);
+      const opts = teamColors.map((c, idx) => ({
+        label: "Color " + (idx + 1),
+        value: c,
+        color: c
+      }));
+      this.showOptionPopup("Select Team Color", opts, (choice) => {
+        this.config.teamColor = choice;
+        teamVal.setBackgroundColor(choice);
+      });
     });
     this.stepContainer.add(teamVal);
 
     // Navigation buttons
-    const backBtn = this.makeButton(cx - 200, cy + 130, "Back to Profiles", () => {
+    const backBtn = this.makeButton(cx - 200, cy + 140, "Back to Profiles", () => {
       this.scene.start("ProfileScene");
     });
-    const nextBtn = this.makeButton(cx + 140, cy + 130, "Next: Attributes", () => {
+    const nextBtn = this.makeButton(cx + 140, cy + 140, "Next: Attributes", () => {
       this.showStep2();
     });
 
@@ -1096,7 +1134,7 @@ class CreatePlayerScene extends Phaser.Scene {
     this.stepContainer.add(nextBtn);
   }
 
-  // ---------- STEP 2: Attribute Allocation ----------
+  /* ---------- STEP 2: Attribute Allocation ---------- */
   showStep2() {
     this.step = 2;
     this.clearStep();
@@ -1105,7 +1143,14 @@ class CreatePlayerScene extends Phaser.Scene {
     const cx = w / 2;
     const cy = h / 2;
 
-    const panel = this.add.rectangle(cx, cy, 740, 420, 0x000000, 0.9)
+    const isPitcher = (this.config.position === "P");
+    const attrs = isPitcher
+      ? ["velocity", "movement", "control", "stamina"]
+      : ["contact", "power", "eye", "speed", "fielding"];
+
+    this.targetTotal = attrs.length * 60;
+
+    const panel = this.add.rectangle(cx, cy, 740, 430, 0x000000, 0.9)
       .setStrokeStyle(2, 0xffffff);
     this.stepContainer.add(panel);
 
@@ -1115,15 +1160,22 @@ class CreatePlayerScene extends Phaser.Scene {
     }).setOrigin(0.5);
     this.stepContainer.add(header);
 
-    // Preset buttons
-    const presets = [
-      { key: "balanced", label: "Balanced" },
-      { key: "powerBat", label: "Power Bat" },
-      { key: "acePitcher", label: "Ace Pitcher" },
-      { key: "speedster", label: "Speedster" }
-    ];
+    // Preset buttons (depending on role)
+    const presetDefs = isPitcher
+      ? [
+          { key: "balanced", label: "Balanced" },
+          { key: "acePitcher", label: "Ace Pitcher" },
+          { key: "controlSpecialist", label: "Control" },
+          { key: "powerArm", label: "Power Arm" }
+        ]
+      : [
+          { key: "balanced", label: "Balanced" },
+          { key: "powerBat", label: "Power Bat" },
+          { key: "speedster", label: "Speedster" },
+          { key: "contactHitter", label: "Contact" }
+        ];
 
-    presets.forEach((p, idx) => {
+    presetDefs.forEach((p, idx) => {
       const btn = this.makeButton(cx - 320 + idx * 180, cy - 150, p.label, () => {
         this.applyPreset(p.key);
         this.showStep2(); // re-render with updated stats
@@ -1132,11 +1184,6 @@ class CreatePlayerScene extends Phaser.Scene {
     });
 
     // Stats list
-    const attrs = [
-      "contact", "power", "eye", "speed", "fielding",
-      "velocity", "movement", "control", "stamina"
-    ];
-
     const leftX = cx - 300;
     const topY = cy - 110;
     const rowH = 36;
@@ -1160,15 +1207,12 @@ class CreatePlayerScene extends Phaser.Scene {
         this.adjustStat(attr, +1);
       });
 
-      // store reference for quick update (if you want smarter UI later)
-      valText.name = "val_" + attr;
-
       this.stepContainer.add(minusBtn);
       this.stepContainer.add(valText);
       this.stepContainer.add(plusBtn);
     });
 
-    const total = this.currentTotal();
+    const total = this.currentTotal(attrs);
     const remaining = this.targetTotal - total;
 
     const totalText = this.add.text(cx - 100, cy + 90,
@@ -1189,7 +1233,7 @@ class CreatePlayerScene extends Phaser.Scene {
       this.showStep1();
     });
     const nextBtn = this.makeButton(cx + 140, cy + 160, "Next: Appearance", () => {
-      if (this.targetTotal - this.currentTotal() !== 0) {
+      if (this.targetTotal - this.currentTotal(attrs) !== 0) {
         this.errorText.setText("You must allocate exactly 60 OVR (all points used) before continuing.");
         return;
       }
@@ -1201,22 +1245,35 @@ class CreatePlayerScene extends Phaser.Scene {
   }
 
   applyPreset(key) {
-    const preset = this.presets[key];
+    const isPitcher = (this.config.position === "P");
+    const source = isPitcher ? this.pitcherPresets : this.hitterPresets;
+    const preset = source[key];
     if (!preset) return;
-    this.stats = { ...preset };
+
+    Object.keys(preset).forEach(attr => {
+      this.stats[attr] = clampAttr(preset[attr]);
+    });
   }
 
-  currentTotal() {
+  currentTotal(attrList) {
+    if (Array.isArray(attrList)) {
+      return attrList.reduce((sum, a) => sum + (this.stats[a] || 0), 0);
+    }
     return Object.values(this.stats).reduce((a, b) => a + b, 0);
   }
 
   adjustStat(attr, delta) {
+    const isPitcher = (this.config.position === "P");
+    const attrs = isPitcher
+      ? ["velocity", "movement", "control", "stamina"]
+      : ["contact", "power", "eye", "speed", "fielding"];
+
     const current = this.stats[attr];
     if (current == null) return;
 
     const newVal = clampAttr(current + delta);
     const newStats = { ...this.stats, [attr]: newVal };
-    const total = Object.values(newStats).reduce((a, b) => a + b, 0);
+    const total = attrs.reduce((sum, a) => sum + (newStats[a] || 0), 0);
 
     if (total > this.targetTotal) {
       // can't go over allowed pool
@@ -1227,7 +1284,7 @@ class CreatePlayerScene extends Phaser.Scene {
     this.showStep2(); // re-render
   }
 
-  // ---------- STEP 3: Appearance + Preview ----------
+  /* ---------- STEP 3: Appearance + Preview ---------- */
   showStep3() {
     this.step = 3;
     this.clearStep();
@@ -1236,7 +1293,7 @@ class CreatePlayerScene extends Phaser.Scene {
     const cx = w / 2;
     const cy = h / 2;
 
-    const panel = this.add.rectangle(cx, cy, 740, 420, 0x000000, 0.9)
+    const panel = this.add.rectangle(cx, cy, 740, 430, 0x000000, 0.9)
       .setStrokeStyle(2, 0xffffff);
     this.stepContainer.add(panel);
 
@@ -1246,18 +1303,21 @@ class CreatePlayerScene extends Phaser.Scene {
     }).setOrigin(0.5);
     this.stepContainer.add(header);
 
+    const isPitcher = (this.config.position === "P");
+    const handedness = isPitcher ? this.config.throwHand : this.config.batHand;
+
     // Live sprite preview
     const gen = new PixelPlayerGenerator(this);
     const previewCfg = {
       name: this.config.name,
       position: this.config.position,
-      handedness: this.config.batHand || "R",
+      handedness: handedness || "R",
       hair: this.config.hair,
-      hairColor: this.config.hair, // simple
+      hairColor: this.config.hairColor || "#222222",
       facial: this.config.facial,
       skin: this.config.skin,
       teamColor: this.config.teamColor,
-      role: "batter"
+      role: isPitcher ? "pitcher" : "batter"
     };
     const texKey = gen.generateCharacterTexture(previewCfg);
     const animKeys = gen.makeAnimationKeysFor(texKey);
@@ -1274,7 +1334,7 @@ class CreatePlayerScene extends Phaser.Scene {
     );
     this.stepContainer.add(infoText);
 
-    // Expanded appearance: cycle a few extra colors/styles
+    // Expanded appearance options using popup lists
     const hairColors = ["#222222", "#8b4513", "#d2b48c", "#ffa500"];
     const jerseyColors = ["#2a6dd6", "#b22222", "#228b22", "#8b008b", "#ff8c00", "#444444"];
 
@@ -1284,14 +1344,20 @@ class CreatePlayerScene extends Phaser.Scene {
     });
     this.stepContainer.add(hairColorLabel);
 
-    let hairColorIndex = 0;
     const hairColorBtn = this.makeButton(cx + 20, cy - 22, "Change", () => {
-      hairColorIndex = (hairColorIndex + 1) % hairColors.length;
-      previewCfg.hairColor = hairColors[hairColorIndex];
-      const newKey = gen.generateCharacterTexture(previewCfg);
-      const newAnimKeys = gen.makeAnimationKeysFor(newKey);
-      sprite.setTexture(newKey);
-      sprite.play(newAnimKeys.idle);
+      const opts = hairColors.map((c, idx) => ({
+        label: "Hair " + (idx + 1),
+        value: c,
+        color: c
+      }));
+      this.showOptionPopup("Select Hair Color", opts, (choice) => {
+        this.config.hairColor = choice;
+        previewCfg.hairColor = choice;
+        const newKey = gen.generateCharacterTexture(previewCfg);
+        const newAnimKeys = gen.makeAnimationKeysFor(newKey);
+        sprite.setTexture(newKey);
+        sprite.play(newAnimKeys.idle);
+      });
     });
     this.stepContainer.add(hairColorBtn);
 
@@ -1301,15 +1367,20 @@ class CreatePlayerScene extends Phaser.Scene {
     });
     this.stepContainer.add(jerseyLabel);
 
-    let jerseyIndex = 0;
     const jerseyBtn = this.makeButton(cx + 20, cy + 18, "Change", () => {
-      jerseyIndex = (jerseyIndex + 1) % jerseyColors.length;
-      this.config.teamColor = jerseyColors[jerseyIndex];
-      previewCfg.teamColor = this.config.teamColor;
-      const newKey = gen.generateCharacterTexture(previewCfg);
-      const newAnimKeys = gen.makeAnimationKeysFor(newKey);
-      sprite.setTexture(newKey);
-      sprite.play(newAnimKeys.idle);
+      const opts = jerseyColors.map((c, idx) => ({
+        label: "Jersey " + (idx + 1),
+        value: c,
+        color: c
+      }));
+      this.showOptionPopup("Select Jersey Color", opts, (choice) => {
+        this.config.teamColor = choice;
+        previewCfg.teamColor = choice;
+        const newKey = gen.generateCharacterTexture(previewCfg);
+        const newAnimKeys = gen.makeAnimationKeysFor(newKey);
+        sprite.setTexture(newKey);
+        sprite.play(newAnimKeys.idle);
+      });
     });
     this.stepContainer.add(jerseyBtn);
 
@@ -1322,10 +1393,10 @@ class CreatePlayerScene extends Phaser.Scene {
     );
     this.stepContainer.add(noteText);
 
-    const backBtn = this.makeButton(cx - 200, cy + 150, "Back: Attributes", () => {
+    const backBtn = this.makeButton(cx - 200, cy + 160, "Back: Attributes", () => {
       this.showStep2();
     });
-    const finishBtn = this.makeButton(cx + 140, cy + 150, "Finish & Save", () => {
+    const finishBtn = this.makeButton(cx + 140, cy + 160, "Finish & Save", () => {
       this.finishCreatePlayer();
     });
 
@@ -1348,9 +1419,83 @@ class CreatePlayerScene extends Phaser.Scene {
     return btn;
   }
 
+  // Generic popup list for selecting options
+  showOptionPopup(title, options, onSelect) {
+    if (this.optionPopup) {
+      this.optionPopup.destroy();
+      this.optionPopup = null;
+    }
+
+    const w = this.cameras.main.width;
+    const h = this.cameras.main.height;
+    const cx = w / 2;
+    const cy = h / 2;
+
+    const panelHeight = 100 + options.length * 26;
+
+    const container = this.add.container(0, 0).setDepth(200);
+    const bg = this.add.rectangle(cx, cy, 360, panelHeight, 0x000000, 0.95)
+      .setOrigin(0.5)
+      .setStrokeStyle(2, 0xffffff);
+    container.add(bg);
+
+    const titleText = this.add.text(cx, cy - panelHeight / 2 + 20, title, {
+      font: "18px monospace",
+      fill: "#ffffff"
+    }).setOrigin(0.5);
+    container.add(titleText);
+
+    options.forEach((opt, idx) => {
+      let label, value, color;
+      if (typeof opt === "string") {
+        label = opt;
+        value = opt;
+        color = null;
+      } else {
+        label = opt.label;
+        value = opt.value;
+        color = opt.color || null;
+      }
+
+      const ty = cy - panelHeight / 2 + 50 + idx * 24;
+      const txt = this.add.text(ty, ty, "", {}); // placeholder to avoid confusion
+      txt.destroy(); // (we'll create proper text below)
+
+      const optionText = this.add.text(cx, ty, label, {
+        font: "16px monospace",
+        fill: "#ffffaa",
+        backgroundColor: color || "#000000",
+        padding: { x: 6, y: 2 }
+      }).setOrigin(0.5).setInteractive();
+
+      optionText.on("pointerdown", () => {
+        onSelect(value);
+        container.destroy();
+        this.optionPopup = null;
+      });
+
+      container.add(optionText);
+    });
+
+    const cancelY = cy + panelHeight / 2 - 24;
+    const cancel = this.add.text(cx, cancelY, "Cancel", {
+      font: "16px monospace",
+      fill: "#ff8080",
+      backgroundColor: "#000000",
+      padding: { x: 6, y: 4 }
+    }).setOrigin(0.5).setInteractive();
+
+    cancel.on("pointerdown", () => {
+      container.destroy();
+      this.optionPopup = null;
+    });
+
+    container.add(cancel);
+    this.optionPopup = container;
+  }
+
   finishCreatePlayer() {
-    // build a full player object based on config + stats
-    // start from makeNewPlayer to keep consistent structure
+    // Build base from makeNewPlayer to keep structure consistent
     const base = makeNewPlayer(
       this.config.name,
       this.config.position,
@@ -1361,20 +1506,27 @@ class CreatePlayerScene extends Phaser.Scene {
       this.config.teamColor
     );
 
-    // override hands
+    // override hands + appearance
     base.throwHand = this.config.throwHand;
     base.batHand = this.config.batHand;
-    base.handedness = this.config.batHand || "R";
+    base.handedness = (this.config.position === "P")
+      ? (this.config.throwHand || "R")
+      : (this.config.batHand || "R");
+    base.hairColor = this.config.hairColor;
+    base.teamColor = this.config.teamColor;
+    base.skin = this.config.skin;
+    base.hair = this.config.hair;
+    base.facial = this.config.facial;
 
-    // apply custom stats
+    // apply custom stats (we keep unused half at defaults)
     Object.keys(this.stats).forEach(k => {
       base[k] = clampAttr(this.stats[k]);
     });
 
-    // recompute overall
+    // recompute overall based on position
     base.overall = computeOverall(base);
 
-    // save into the correct slot
+    // save into the correct slot — each slot is its own game
     let slots;
     try {
       const arr = JSON.parse(localStorage.getItem("players") || "[]");
@@ -1387,10 +1539,11 @@ class CreatePlayerScene extends Phaser.Scene {
     localStorage.setItem("players", JSON.stringify(slots));
     localStorage.setItem("currentPlayer", JSON.stringify(base));
 
-    // start game
+    // start game with this profile
     this.scene.start("GameScene");
   }
 }
+
 
 
 /* ---------- GameScene (Main Gameplay) ---------- */
