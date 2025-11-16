@@ -122,7 +122,7 @@ function applyUpgradeToCustom(player, stat, amount) {
 }
 
 /* ================================
-   PIXEL PLAYER GENERATOR
+   PIXEL PLAYER GENERATOR (FIXED)
 ================================= */
 
 class PixelPlayerGenerator {
@@ -131,6 +131,7 @@ class PixelPlayerGenerator {
     this.baseW = 16;
     this.baseH = 24;
     this.scale = 3;
+
     this.animFrames = {
       idle: 2,
       walk: 4,
@@ -139,28 +140,28 @@ class PixelPlayerGenerator {
       swing: 3,
       catch: 3
     };
+
     this.registered = new Set();
   }
 
-  keyFor(cfg) {
-  function clean(str, fallback) {
-    const s = (str || fallback || "").toString();
-    // Remove everything except letters and numbers to keep texture keys safe
-    return s.replace(/[^a-zA-Z0-9]/g, "");
+  // SAFELY SANITIZE TEXTURE KEYS
+  clean(str) {
+    return (str || "").toString().replace(/[^a-zA-Z0-9]/g, "");
   }
 
-  return [
-    "char",
-    clean(cfg.id || cfg.name, "anon"),
-    clean(cfg.position, "X"),
-    clean(cfg.handedness, "R"),
-    clean(cfg.skin, "skin"),
-    clean(cfg.hair, "hair"),
-    clean(cfg.hairColor, "hc"),
-    clean(cfg.facial, "face"),
-    clean(cfg.teamColor, "team")
-  ].join("_");
-}
+  keyFor(cfg) {
+    return [
+      "char",
+      this.clean(cfg.id || cfg.name || "anon"),
+      this.clean(cfg.position || "X"),
+      this.clean(cfg.handedness || "R"),
+      this.clean(cfg.skin || "skin"),
+      this.clean(cfg.hair || "hair"),
+      this.clean(cfg.hairColor || "hclr"),
+      this.clean(cfg.facial || "face"),
+      this.clean(cfg.teamColor || "team")
+    ].join("_");
+  }
 
   makeAnimationKeysFor(key) {
     return {
@@ -178,7 +179,7 @@ class PixelPlayerGenerator {
     if (this.registered.has(key)) return key;
 
     const actions = ["idle", "walk", "run", "pitch", "swing", "catch"];
-    const cols = Math.max.apply(null, actions.map(a => this.animFrames[a]));
+    const cols = Math.max(...actions.map(a => this.animFrames[a]));
     const rows = actions.length;
 
     const canvas = document.createElement("canvas");
@@ -187,162 +188,95 @@ class PixelPlayerGenerator {
     const ctx = canvas.getContext("2d");
     ctx.imageSmoothingEnabled = false;
 
+    // DRAW ALL FRAMES
     for (let r = 0; r < rows; r++) {
       const action = actions[r];
       const frames = this.animFrames[action];
+
       for (let f = 0; f < frames; f++) {
-        const px = f * this.baseW;
-        const py = r * this.baseH;
-        drawPlayerFrame(ctx, px, py, this.baseW, this.baseH, f, action, cfg);
+        drawPlayerFrame(ctx, f * this.baseW, r * this.baseH, this.baseW, this.baseH, f, action, cfg);
       }
+
+      // Pad row so all have equal length
       for (let f = frames; f < cols; f++) {
-        const sx = (frames - 1) * this.baseW;
-        const sy = r * this.baseH;
-        ctx.drawImage(canvas, sx, sy, this.baseW, this.baseH, f * this.baseW, sy, this.baseW, this.baseH);
+        ctx.drawImage(
+          canvas,
+          (frames - 1) * this.baseW,
+          r * this.baseH,
+          this.baseW,
+          this.baseH,
+          f * this.baseW,
+          r * this.baseH,
+          this.baseW,
+          this.baseH
+        );
       }
     }
 
-    let index = 0;
+    // SLICE INTO INDIVIDUAL PHASER TEXTURES
+    let frameIndex = 0;
     const framesMap = {};
-    for (let r = 0; r < rows; r++) {
-      const action = actions[r];
+
+    actions.forEach((action, r) => {
       framesMap[action] = [];
       for (let c = 0; c < cols; c++) {
-        const sx = c * this.baseW;
-        const sy = r * this.baseH;
         const frameCanvas = document.createElement("canvas");
-frameCanvas.width = this.baseW;
-frameCanvas.height = this.baseH;
-const fctx = frameCanvas.getContext("2d");
-fctx.imageSmoothingEnabled = false;
-fctx.drawImage(canvas, sx, sy, this.baseW, this.baseH, 0, 0, this.baseW, this.baseH);
+        frameCanvas.width = this.baseW;
+        frameCanvas.height = this.baseH;
+        const fctx = frameCanvas.getContext("2d");
+        fctx.imageSmoothingEnabled = false;
 
-const frameKey = key + "_f" + index++;
+        fctx.drawImage(
+          canvas,
+          c * this.baseW,
+          r * this.baseH,
+          this.baseW,
+          this.baseH,
+          0,
+          0,
+          this.baseW,
+          this.baseH
+        );
 
-// If this frameKey already exists for some reason, remove it first
-if (this.scene.textures.exists(frameKey)) {
-  this.scene.textures.remove(frameKey);
-}
+        const frameKey = key + "_f" + frameIndex++;
 
-// Register this frame directly from the canvas (more reliable than Base64)
-this.scene.textures.addCanvas(frameKey, frameCanvas);
+        // SAFELY REGISTER FRAME
+        if (this.scene.textures.exists(frameKey)) {
+          this.scene.textures.remove(frameKey);
+        }
 
-framesMap[action].push({ key: frameKey });
+        this.scene.textures.addCanvas(frameKey, frameCanvas);
 
+        framesMap[action].push({ key: frameKey });
       }
-    }
+    });
 
+    // CREATE ANIMATIONS
     const animKeys = this.makeAnimationKeysFor(key);
-    const anims = this.scene.anims;
-    function makeAnim(scene, animKey, frames, fps, repeat) {
-      if (!scene.anims.exists(animKey)) {
-        scene.anims.create({
-          key: animKey,
+
+    const createAnim = (name, frames, fps, repeat) => {
+      if (!this.scene.anims.exists(name)) {
+        this.scene.anims.create({
+          key: name,
           frames: frames,
           frameRate: fps,
           repeat: repeat
         });
       }
-    }
+    };
 
-    makeAnim(this.scene, animKeys.idle, framesMap.idle, 6, -1);
-    makeAnim(this.scene, animKeys.walk, framesMap.walk, 10, -1);
-    makeAnim(this.scene, animKeys.run, framesMap.run, 12, -1);
-    makeAnim(this.scene, animKeys.pitch, framesMap.pitch, 10, 0);
-    makeAnim(this.scene, animKeys.swing, framesMap.swing, 12, 0);
-    makeAnim(this.scene, animKeys.catch, framesMap.catch, 10, 0);
+    createAnim(animKeys.idle, framesMap.idle, 6, -1);
+    createAnim(animKeys.walk, framesMap.walk, 10, -1);
+    createAnim(animKeys.run, framesMap.run, 12, -1);
+    createAnim(animKeys.pitch, framesMap.pitch, 10, 0);
+    createAnim(animKeys.swing, framesMap.swing, 12, 0);
+    createAnim(animKeys.catch, framesMap.catch, 10, 0);
 
     this.registered.add(key);
     return key;
   }
 }
 
-function drawPlayerFrame(ctx, px, py, w, h, frameIndex, action, cfg) {
-  const skin = cfg.skin || "#f1c27d";
-  const hairColor = cfg.hairColor || cfg.hair || "#222222";
-  const team = cfg.teamColor || "#2a6dd6";
-  const hairStyle = cfg.hair || "short";
-  const facial = cfg.facial || "none";
-
-  ctx.clearRect(px, py, w, h);
-
-  const cx = px + Math.floor(w / 2);
-  let offsetY = 0;
-  let armOffset = 0;
-
-  if (action === "idle") {
-    offsetY = frameIndex % 2 === 0 ? 0 : 1;
-  } else if (action === "walk") {
-    offsetY = frameIndex % 2 === 0 ? 0 : 1;
-    armOffset = (frameIndex % 4) - 1;
-  } else if (action === "run") {
-    offsetY = frameIndex % 2 === 0 ? 0 : 1;
-    armOffset = frameIndex % 2 === 0 ? -1 : 1;
-  } else if (action === "pitch") {
-    armOffset = frameIndex === 0 ? -2 : (frameIndex === 1 ? 0 : 2);
-    offsetY = frameIndex === 1 ? -1 : 0;
-  } else if (action === "swing") {
-    armOffset = frameIndex === 0 ? -2 : (frameIndex === 1 ? 1 : 3);
-    offsetY = frameIndex % 2 === 0 ? 0 : 1;
-  } else if (action === "catch") {
-    armOffset = (frameIndex % 3) - 1;
-  }
-
-  const torsoW = 6;
-  const torsoH = 7;
-  const torsoX = cx - Math.floor(torsoW / 2);
-  const torsoY = py + 8 + offsetY;
-
-  ctx.fillStyle = team;
-  ctx.fillRect(torsoX, torsoY, torsoW, torsoH);
-
-  ctx.fillStyle = "#333333";
-  ctx.fillRect(cx - 3, torsoY + torsoH, 3, 5);
-  ctx.fillRect(cx, torsoY + torsoH, 3, 5);
-
-  const headX = cx - 2;
-  const headY = torsoY - 6 + offsetY;
-  ctx.fillStyle = skin;
-  ctx.fillRect(headX, headY, 5, 5);
-
-  ctx.fillStyle = hairColor;
-  if (hairStyle === "short") {
-    ctx.fillRect(headX, headY, 5, 2);
-  } else if (hairStyle === "long") {
-    ctx.fillRect(headX - 1, headY + 1, 7, 4);
-  } else if (hairStyle === "mohawk") {
-    ctx.fillRect(cx - 1, headY - 1, 1, 5);
-  }
-
-  ctx.fillStyle = "#222222";
-  if (facial === "mustache") {
-    ctx.fillRect(cx - 1, headY + 1, 3, 1);
-  } else if (facial === "beard") {
-    ctx.fillRect(headX, headY + 3, 5, 2);
-  } else if (facial === "goatee") {
-    ctx.fillRect(cx - 1, headY + 3, 3, 1);
-  }
-
-  ctx.fillStyle = "#111111";
-  ctx.fillRect(cx - 1, headY + 1, 1, 1);
-  ctx.fillRect(cx + 1, headY + 1, 1, 1);
-
-  if (cfg.role === "batter" || cfg.position === "B") {
-    const batX = cfg.handedness === "L" ? cx - 9 + armOffset : cx + 3 + armOffset;
-    ctx.fillStyle = "#7a5c2b";
-    ctx.fillRect(batX, torsoY + 1, 1, 6);
-  } else if (cfg.role === "pitcher" || cfg.position === "P") {
-    ctx.fillStyle = "#5a3a1a";
-    ctx.fillRect(cx - 7, torsoY + 1, 3, 3);
-    const handSide = cfg.handedness === "R" ? 1 : -1;
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(cx + handSide * (3 + Math.max(0, armOffset)), torsoY - 1, 1, 1);
-  }
-
-  ctx.strokeStyle = "#000000";
-  ctx.lineWidth = 0.5;
-  ctx.strokeRect(px + 0.5, py + 0.5, w - 1, h - 1);
-}
 
 /* ================================
    MATCHUP & AT-BAT LOGIC
