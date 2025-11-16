@@ -120,6 +120,100 @@ function applyUpgradeToCustom(player, stat, amount) {
   const inc = Math.max(0, Math.min(amount, room));
   player[stat] = clampAttr(base + inc);
 }
+function drawPlayerFrame(ctx, px, py, w, h, frameIndex, action, cfg) {
+  const skin = cfg.skin || "#f1c27d";
+  const hairColor = cfg.hairColor || cfg.hair || "#222222";
+  const team = cfg.teamColor || "#2a6dd6";
+  const hairStyle = cfg.hair || "short";
+  const facial = cfg.facial || "none";
+
+  ctx.clearRect(px, py, w, h);
+
+  const cx = px + Math.floor(w / 2);
+  let offsetY = 0;
+  let armOffset = 0;
+
+  if (action === "idle") {
+    offsetY = frameIndex % 2 === 0 ? 0 : 1;
+  } else if (action === "walk") {
+    offsetY = frameIndex % 2 === 0 ? 0 : 1;
+    armOffset = (frameIndex % 4) - 1;
+  } else if (action === "run") {
+    offsetY = frameIndex % 2 === 0 ? 0 : 1;
+    armOffset = frameIndex % 2 === 0 ? -1 : 1;
+  } else if (action === "pitch") {
+    armOffset = frameIndex === 0 ? -2 : (frameIndex === 1 ? 0 : 2);
+    offsetY = frameIndex === 1 ? -1 : 0;
+  } else if (action === "swing") {
+    armOffset = frameIndex === 0 ? -2 : (frameIndex === 1 ? 1 : 3);
+    offsetY = frameIndex % 2 === 0 ? 0 : 1;
+  } else if (action === "catch") {
+    armOffset = (frameIndex % 3) - 1;
+  }
+
+  const torsoW = 6;
+  const torsoH = 7;
+  const torsoX = cx - Math.floor(torsoW / 2);
+  const torsoY = py + 8 + offsetY;
+
+  // torso
+  ctx.fillStyle = team;
+  ctx.fillRect(torsoX, torsoY, torsoW, torsoH);
+
+  // legs
+  ctx.fillStyle = "#333333";
+  ctx.fillRect(cx - 3, torsoY + torsoH, 3, 5);
+  ctx.fillRect(cx, torsoY + torsoH, 3, 5);
+
+  // head
+  const headX = cx - 2;
+  const headY = torsoY - 6 + offsetY;
+  ctx.fillStyle = skin;
+  ctx.fillRect(headX, headY, 5, 5);
+
+  // hair
+  ctx.fillStyle = hairColor;
+  if (hairStyle === "short") {
+    ctx.fillRect(headX, headY, 5, 2);
+  } else if (hairStyle === "long") {
+    ctx.fillRect(headX - 1, headY + 1, 7, 4);
+  } else if (hairStyle === "mohawk") {
+    ctx.fillRect(cx - 1, headY - 1, 1, 5);
+  }
+
+  // facial hair
+  ctx.fillStyle = "#222222";
+  if (facial === "mustache") {
+    ctx.fillRect(cx - 1, headY + 1, 3, 1);
+  } else if (facial === "beard") {
+    ctx.fillRect(headX, headY + 3, 5, 2);
+  } else if (facial === "goatee") {
+    ctx.fillRect(cx - 1, headY + 3, 3, 1);
+  }
+
+  // eyes
+  ctx.fillStyle = "#111111";
+  ctx.fillRect(cx - 1, headY + 1, 1, 1);
+  ctx.fillRect(cx + 1, headY + 1, 1, 1);
+
+  // equip
+  if (cfg.role === "batter" || cfg.position === "B") {
+    const batX = cfg.handedness === "L" ? cx - 9 + armOffset : cx + 3 + armOffset;
+    ctx.fillStyle = "#7a5c2b";
+    ctx.fillRect(batX, torsoY + 1, 1, 6);
+  } else if (cfg.role === "pitcher" || cfg.position === "P") {
+    ctx.fillStyle = "#5a3a1a";
+    ctx.fillRect(cx - 7, torsoY + 1, 3, 3); // glove
+    const handSide = cfg.handedness === "R" ? 1 : -1;
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(cx + handSide * (3 + Math.max(0, armOffset)), torsoY - 1, 1, 1);
+  }
+
+  // outline
+  ctx.strokeStyle = "#000000";
+  ctx.lineWidth = 0.5;
+  ctx.strokeRect(px + 0.5, py + 0.5, w - 1, h - 1);
+}
 
 /* ================================
    PIXEL PLAYER GENERATOR (FIXED)
