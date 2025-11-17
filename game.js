@@ -777,7 +777,7 @@ function applyVarianceModel(attrs, targetOvr) {
   return attrs;
 }
 
-function generateRandomDraftPlayer(position, rarity) {
+function generateRandomDraftPlayer(position, rarity, teamColorOverride) {
   const [minOvr, maxOvr] = getOvrRangeForRarity(rarity);
   const targetOvr = randInt(minOvr, maxOvr);
   const pitcher = isPitcherPosition(position);
@@ -786,62 +786,78 @@ function generateRandomDraftPlayer(position, rarity) {
   const pitcherAttrs = ["velocity", "movement", "control", "stamina"];
   const keys = pitcher ? pitcherAttrs : hitterAttrs;
 
+  // 1) Base balanced attributes around target overall
   let attrs = generateBaseAttributes(keys, targetOvr);
+
+  // 2) Apply chaos / spike / double-spike logic
   attrs = applyVarianceModel(attrs, targetOvr);
 
+  // 3) Cosmetic/random appearance
   const name = "Player " + randInt(100, 999);
 
   const hairStyles = ["short", "long", "mohawk", "bald"];
   const facialStyles = ["none", "mustache", "beard", "goatee"];
   const hairColors = ["#222222", "#8b4513", "#d2b48c", "#ffa500"];
   const skinColors = ["#f1c27d", "#e0ac69", "#c68642", "#8d5524"];
-  const teamColors = ["#2a6dd6", "#b22222", "#228b22", "#8b008b", "#ff8c00", "#444444"];
+  const fallbackTeamColors = ["#2a6dd6", "#b22222", "#228b22", "#8b008b", "#ff8c00", "#444444"];
 
   const hair = hairStyles[randInt(0, hairStyles.length - 1)];
   const facial = facialStyles[randInt(0, facialStyles.length - 1)];
   const hairColor = hairColors[randInt(0, hairColors.length - 1)];
   const skin = skinColors[randInt(0, skinColors.length - 1)];
-  const teamColor = teamColors[randInt(0, teamColors.length - 1)];
+  const teamColor = teamColorOverride || fallbackTeamColors[randInt(0, fallbackTeamColors.length - 1)];
 
+  // 4) Hands / handedness
   const throwHand = Math.random() < 0.5 ? "R" : "L";
   let batHand;
   if (pitcher) {
+    // Pitchers bat R or L, but no switch emphasis
     batHand = Math.random() < 0.5 ? "R" : "L";
   } else {
+    // Hitters: some chance to be switch
     const r = Math.random();
-    if (r < 0.1) batHand = "S";
+    if (r < 0.10) batHand = "S";
     else if (r < 0.55) batHand = "R";
     else batHand = "L";
   }
 
-  // Start from base player structure, then override
+  // 5) Start from base player to keep structure consistent
   const base = makeNewPlayer(
     name,
     position,
-    batHand,
+    batHand,    // handedness for base; we'll override below as needed
     hair,
     skin,
     facial,
     teamColor
   );
 
+  // 6) Override fields precisely for our draft player
   base.throwHand = throwHand;
   base.batHand = batHand;
   base.handedness = pitcher ? throwHand : batHand;
+
+  base.hair = hair;
   base.hairColor = hairColor;
   base.skin = skin;
+  base.facial = facial;
   base.teamColor = teamColor;
+
   base.position = position;
   base.role = pitcher ? "pitcher" : "batter";
   base.rarity = rarity;
 
+  // 7) Apply our generated attributes
   keys.forEach(k => {
     base[k] = attrs[k];
   });
 
+  // 8) Compute overall using your position-based logic
   base.overall = computeOverall(base);
+
   return base;
 }
+
 
 /* ================================
    SCENES
@@ -1850,12 +1866,15 @@ class DraftScene extends Phaser.Scene {
     ).setOrigin(0.5);
     this.roundContainer.add(subheader);
 
-    // Generate 3 candidates
-    this.currentOptions = [
-      generateRandomDraftPlayer(pos, rarity),
-      generateRandomDraftPlayer(pos, rarity),
-      generateRandomDraftPlayer(pos, rarity)
-    ];
+    // Generate 3 candidates (matching created player's team color)
+const teamColor = this.currentPlayer.teamColor;
+
+this.currentOptions = [
+  generateRandomDraftPlayer(pos, rarity, teamColor),
+  generateRandomDraftPlayer(pos, rarity, teamColor),
+  generateRandomDraftPlayer(pos, rarity, teamColor)
+];
+
 
     const startX = 80;
     const startY = 140;
