@@ -1852,7 +1852,9 @@ class DraftScene extends Phaser.Scene {
 
     this.roundContainer = this.add.container(0, 0);
 
-    this.add.rectangle(0, 0, w * 2, h * 2, 0x0b2430).setOrigin(0);
+   const bg = this.add.rectangle(0, 0, w * 2, h * 2, 0x0b2430).setOrigin(0);
+this.roundContainer.add(bg);
+
 
     const header = this.add.text(w / 2, 40,
       `Draft Round ${ds.round + 1} / ${totalRounds}`,
