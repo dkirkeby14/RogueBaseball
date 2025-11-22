@@ -865,14 +865,20 @@ function generateRandomDraftPlayer(position, rarity, teamColorOverride) {
 
 /* ---------- BootScene ---------- */
 class BootScene extends Phaser.Scene {
-  constructor() {
-    super({ key: "BootScene" });
-  }
-  preload() {}
-  create() {
-    this.scene.start("TitleScene");
-  }
+    constructor() {
+        super({ key: "BootScene" });
+    }
+
+    preload() {
+        // Load the baseball field background
+        this.load.image("field", "field.png");
+    }
+
+    create() {
+        this.scene.start("TitleScene");
+    }
 }
+
 
 /* ---------- TitleScene ---------- */
 class TitleScene extends Phaser.Scene {
@@ -2012,7 +2018,14 @@ class GameScene extends Phaser.Scene {
       teamPlayers: []
     };
 
-    this.add.rectangle(0, 0, GAME_WIDTH * 2, GAME_HEIGHT * 2, 0x2f7f3c).setOrigin(0);
+    // Add the baseball field background (pixel art)
+const field = this.add.image(0, 0, "field")
+    .setOrigin(0)
+    .setScale(1);
+
+// Set camera bounds so the field is the world
+this.cameras.main.setBounds(0, 0, field.width, field.height);
+
 
     this.defenders = [];
     const defenderPositions = this.getDefenderPositions();
@@ -2065,20 +2078,26 @@ class GameScene extends Phaser.Scene {
   }
 
   getDefenderPositions() {
-    const cx = GAME_WIDTH / 2;
-    const cy = GAME_HEIGHT / 2 - 40;
     return [
-      { x: cx, y: cy - 130 },
-      { x: cx - 150, y: cy - 80 },
-      { x: cx + 150, y: cy - 80 },
-      { x: cx - 90, y: cy + 10 },
-      { x: cx + 90, y: cy + 10 },
-      { x: cx - 30, y: cy + 70 },
-      { x: cx + 30, y: cy + 70 },
-      { x: cx - 30, y: cy + 120 },
-      { x: cx + 30, y: cy + 120 }
+        // Outfield (deep & correct positions)
+        { x: 512, y: 180 },  // CF
+        { x: 260, y: 220 },  // LF
+        { x: 760, y: 220 },  // RF
+
+        // Infield baseline (perfectly matching stadium)
+        { x: 315, y: 355 },  // 3B
+        { x: 710, y: 355 },  // 1B
+        { x: 420, y: 390 },  // SS
+        { x: 610, y: 390 },  // 2B
+
+        // Battery (home side)
+        { x: 512, y: 470 },  // C
+
+        // Temporary extra fielder (later replaced by real positions)
+        { x: 512, y: 330 }   // Spare infielder
     ];
-  }
+}
+
 
   getBasesLayout() {
     const cx = GAME_WIDTH / 2;
