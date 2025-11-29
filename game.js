@@ -977,9 +977,23 @@ class ProfileScene extends Phaser.Scene {
         });
 
         const playBtn = this.makeButton(x + 16, y + 70, "Play", () => {
-          localStorage.setItem("currentPlayer", JSON.stringify(player));
-          this.scene.start("DraftScene");
-        });
+  // set current profile
+  localStorage.setItem("currentPlayer", JSON.stringify(player));
+
+  // check if this profile already has a roster
+  const rosterKey = "roster_" + player.id;
+  const existingRoster = localStorage.getItem(rosterKey);
+
+  if (existingRoster) {
+    // load roster and go to main hub
+    localStorage.setItem("currentRoster", existingRoster);
+    this.scene.start("MainMenuScene");
+  } else {
+    // no roster yet → go draft a team
+    this.scene.start("DraftScene");
+  }
+});
+
 
         const deleteBtn = this.makeButton(x + 100, y + 70, "Delete", () => {
           if (confirm("Delete this profile?")) {
@@ -1978,9 +1992,184 @@ this.currentOptions = [
   }
 
   finishDraft() {
-    // Should now have 13 players including created player
-    localStorage.setItem("currentRoster", JSON.stringify(this.draftState.roster));
-    this.scene.start("GameScene");
+  // 13 players including created player
+  const rosterJson = JSON.stringify(this.draftState.roster);
+  const rosterKey = "roster_" + this.currentPlayer.id;
+
+  // save roster both under player-specific key and as the currently active roster
+  localStorage.setItem(rosterKey, rosterJson);
+  localStorage.setItem("currentRoster", rosterJson);
+
+  // go to the main hub instead of straight into a half-broken game scene
+  this.scene.start("MainMenuScene");
+}
+
+}
+
+/* ---------- MainMenuScene (Team Hub) ---------- */
+class MainMenuScene extends Phaser.Scene {
+  constructor() {
+    super({ key: "MainMenuScene" });
+    this.roster = null;
+    this.pitchers = [];
+    this.assignedPitcherId = null;
+  }
+
+  create() {
+    try {
+      this.currentPlayer = JSON.parse(localStorage.getItem("currentPlayer") || "null");
+    } catch (e) {
+      this.currentPlayer = null;
+    }
+
+    if (!this.currentPlayer) {
+      this.scene.start("ProfileScene");
+      return;
+    }
+
+    // load roster (prefer currentRoster, fall back to player-specific key)
+    const rosterKey = "roster_" + this.currentPlayer.id;
+    let rosterJson = localStorage.getItem("currentRoster");
+    if (!rosterJson) {
+      rosterJson = localStorage.getItem(rosterKey);
+    }
+
+    if (!rosterJson) {
+      // no roster? send them to draft
+      this.scene.start("DraftScene");
+      return;
+    }
+
+    try {
+      this.roster = JSON.parse(rosterJson);
+    } catch (e) {
+      this.roster = null;
+    }
+
+    if (!Array.isArray(this.roster) || this.roster.length === 0) {
+      this.scene.start("DraftScene");
+      return;
+    }
+
+    const w = this.cameras.main.width;
+    const h = this.cameras.main.height;
+
+    // background
+    this.add.rectangle(0, 0, w * 2, h * 2, 0x061421).setOrigin(0);
+
+    this.add.text(w / 2, 40, "TEAM HUB", {
+      font: "28px monospace",
+      fill: "#ffffff"
+    }).setOrigin(0.5);
+
+    this.add.text(w / 2, 80,
+      `${this.currentPlayer.name}  |  POS: ${this.currentPlayer.position}  |  OVR: ${this.currentPlayer.overall}`,
+      { font: "16px monospace", fill: "#d0f0ff" }
+    ).setOrigin(0.5);
+
+    // split pitchers / hitters
+    this.pitchers = this.roster.filter(p => p.position === "P");
+    const hitters = this.roster.filter(p => p.position !== "P");
+
+    this.add.text(40, 120, "Pitchers:", {
+      font: "18px monospace",
+      fill: "#ffffff"
+    });
+
+    let y = 150;
+    this.pitchers.forEach((p, idx) => {
+      const t = this.add.text(60, y,
+        `${p.name}  OVR: ${p.overall}  (${p.rarity})`,
+        { font: "14px monospace", fill: "#ffffaa", backgroundColor: "#111111", padding: { x: 4, y: 2 } }
+      ).setInteractive();
+
+      t.on("pointerdown", () => {
+        this.assignStarter(p);
+      });
+
+      y += 26;
+    });
+
+    this.add.text(480, 120, "Hitters:", {
+      font: "18px monospace",
+      fill: "#ffffff"
+    });
+
+    let hy = 150;
+    hitters.forEach(p => {
+      this.add.text(500, hy,
+        `${p.position}  ${p.name}  OVR: ${p.overall}`,
+        { font: "14px monospace", fill: "#d0f0ff" }
+      );
+      hy += 20;
+    });
+
+    // show current assigned starter (if any)
+    const starterKey = "assignedPitcher_" + this.currentPlayer.id;
+    this.assignedPitcherId = localStorage.getItem(starterKey) || null;
+    this.assignedText = this.add.text(40, h - 140, "", {
+      font: "16px monospace",
+      fill: "#80ff80"
+    });
+    this.updateAssignedText();
+
+    // Start Game button
+    const startBtn = this.add.text(40, h - 80, "Start Game", {
+      font: "20px monospace",
+      fill: "#00ffff",
+      backgroundColor: "#000000",
+      padding: { x: 8, y: 6 }
+    }).setInteractive();
+
+    startBtn.on("pointerdown", () => {
+      if (!this.assignedPitcherId) {
+        alert("Select a starting pitcher first from the list.");
+        return;
+      }
+      localStorage.setItem("currentRoster", JSON.stringify(this.roster));
+      this.scene.start("GameScene");
+    });
+
+    // back to profiles
+    const backBtn = this.add.text(w - 160, h - 80, "Profiles", {
+      font: "16px monospace",
+      fill: "#ff8080",
+      backgroundColor: "#000000",
+      padding: { x: 8, y: 6 }
+    }).setInteractive();
+
+    backBtn.on("pointerdown", () => {
+      this.scene.start("ProfileScene");
+    });
+  }
+
+  assignStarter(p) {
+    const key = "assignedPitcher_" + this.currentPlayer.id;
+    this.assignedPitcherId = p.id;
+    localStorage.setItem(key, p.id);
+    this.updateAssignedText();
+  }
+
+  updateAssignedText() {
+    if (!this.assignedText) return;
+
+    if (!this.assignedPitcherId) {
+      this.assignedText.setText("Current Game Starter: NONE SELECTED");
+      this.assignedText.setStyle({ fill: "#ff8080" });
+      return;
+    }
+
+    const starter = this.pitchers.find(p => p.id === this.assignedPitcherId);
+    if (!starter) {
+      this.assignedText.setText("Current Game Starter: INVALID");
+      this.assignedText.setStyle({ fill: "#ff8080" });
+      return;
+    }
+
+    this.assignedText.setText(
+      `Current Game Starter: ${starter.name}  (OVR ${starter.overall})`
+    );
+    this.assignedText.setStyle({ fill: "#80ff80" });
   }
 }
 
@@ -2010,6 +2199,44 @@ class GameScene extends Phaser.Scene {
       return;
     }
 
+    // NEW: load roster
+    let rosterJson = localStorage.getItem("currentRoster");
+    if (!rosterJson && this.currentPlayer) {
+      const rosterKey = "roster_" + this.currentPlayer.id;
+      rosterJson = localStorage.getItem(rosterKey);
+    }
+
+    if (!rosterJson) {
+      this.scene.start("MainMenuScene");
+      return;
+    }
+
+    try {
+      this.roster = JSON.parse(rosterJson);
+    } catch (e) {
+      this.roster = null;
+    }
+
+    if (!Array.isArray(this.roster) || this.roster.length === 0) {
+      this.scene.start("MainMenuScene");
+      return;
+    }
+
+    // figure out which pitcher is assigned as starter
+    const starterKey = "assignedPitcher_" + this.currentPlayer.id;
+    const starterId = localStorage.getItem(starterKey);
+    let starter = starterId
+      ? this.roster.find(p => p.id === starterId)
+      : null;
+
+    if (!starter) {
+      // fallback: any pitcher, or created player
+      starter = this.roster.find(p => p.position === "P") || this.currentPlayer;
+    }
+
+    // create gameState, background, etc...
+
+
     this.gameState = {
       inning: 1,
       half: "top",
@@ -2017,6 +2244,13 @@ class GameScene extends Phaser.Scene {
       score: { visiting: 0, home: 0 },
       teamPlayers: []
     };
+
+     const bg = this.add.rectangle(0, 0, 280, 200, 0x000000, 0.65).setOrigin(0);
+     this.bases = this.getBasesLayout();
+
+     this.generator = this.generator || new PixelPlayerGenerator(this);
+     this.defenders = [];
+     this.runners = []; 
 
     // Add the baseball field background (pixel art)
 const field = this.add.image(0, 0, "field")
@@ -2027,26 +2261,44 @@ const field = this.add.image(0, 0, "field")
 this.cameras.main.setBounds(0, 0, field.width, field.height);
 
 
+       // Build a lookup of fielders by position from the roster
+    const fielderPositions = ["C", "1B", "2B", "3B", "SS", "LF", "CF", "RF"];
+    const fielderMap = {};
+    fielderPositions.forEach(pos => {
+      const found = this.roster.find(p => p.position === pos);
+      if (found) fielderMap[pos] = found;
+    });
+
     this.defenders = [];
-    const defenderPositions = this.getDefenderPositions();
-    for (let i = 0; i < 9; i++) {
-      const clone = JSON.parse(JSON.stringify(this.currentPlayer));
-      clone.id = clone.id + "_def" + i;
-      clone.position = "F";
+
+    fielderPositions.forEach(pos => {
+      const basePlayer = fielderMap[pos];
+      if (!basePlayer) return; // should exist from draft, but just in case
+
+      const clone = JSON.parse(JSON.stringify(basePlayer));
+      clone.id = clone.id + "_def";
       clone.role = "fielder";
-      clone.contact = clampAttr(clone.contact + randInt(-5, 5));
-      clone.power = clampAttr(clone.power + randInt(-5, 5));
-      const obj = this.createPlayerSprite(defenderPositions[i].x, defenderPositions[i].y, clone);
+
+      const coords = this.getFielderCoords(pos);
+      const obj = this.createPlayerSprite(coords.x, coords.y, clone);
+
       this.defenders.push(obj);
       this.gameState.teamPlayers.push(clone);
-    }
+    });
 
-    const pClone = JSON.parse(JSON.stringify(this.currentPlayer));
+
+       const pClone = JSON.parse(JSON.stringify(starter));
     pClone.id = pClone.id + "_pitch";
     pClone.position = "P";
     pClone.role = "pitcher";
-    this.pitcherObj = this.createPlayerSprite(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 60, pClone);
+
+    // mound position (we’ll later sync this with the exact mound spot from the art)
+    const moundX = GAME_WIDTH / 2;
+    const moundY = GAME_HEIGHT / 2 - 60;
+
+    this.pitcherObj = this.createPlayerSprite(moundX, moundY, pClone);
     this.gameState.teamPlayers.push(pClone);
+
 
     const bClone = JSON.parse(JSON.stringify(this.currentPlayer));
     bClone.id = bClone.id + "_batt";
@@ -2110,6 +2362,29 @@ this.cameras.main.setBounds(0, 0, field.width, field.height);
     };
   }
 
+     getFielderCoords(pos) {
+    const cx = GAME_WIDTH / 2;
+    const cy = GAME_HEIGHT / 2 - 40;
+    const bases = this.bases || this.getBasesLayout();
+
+    // These can be tweaked later to match the final art, but they’re roughly:
+    // infielders around the bases, outfielders deeper, catcher behind home.
+    const layout = {
+      C:  { x: bases.home.x,        y: bases.home.y + 28 },
+      "1B": { x: bases.first.x + 30,  y: bases.first.y + 10 },
+      "2B": { x: bases.second.x + 10, y: bases.second.y - 30 },
+      "3B": { x: bases.third.x - 30,  y: bases.third.y + 10 },
+      SS: { x: bases.second.x - 70, y: bases.second.y + 20 },
+
+      LF: { x: bases.third.x - 90,  y: bases.third.y - 140 },
+      CF: { x: cx,                  y: cy - 160 },
+      RF: { x: bases.first.x + 90,  y: bases.first.y - 140 }
+    };
+
+    return layout[pos] || { x: cx, y: cy };
+  }
+
+
   createPlayerSprite(x, y, cfg) {
     const key = this.generator.generateCharacterTexture(cfg);
     const sprite = this.add.sprite(x, y, key).setOrigin(0.5, 0.9);
@@ -2170,7 +2445,7 @@ this.cameras.main.setBounds(0, 0, field.width, field.height);
     if (this.cardContainer) this.cardContainer.destroy();
     this.cardContainer = this.add.container(10, GAME_HEIGHT - 220).setScrollFactor(0).setDepth(40);
 
-    const bg = this.add.rectangle(0, 0, 280, 200, 0x000000, 0.65).setOrigin(0);
+    
     this.cardContainer.add(bg);
 
     const keyCfg = {
@@ -2799,7 +3074,7 @@ const config = {
     default: "arcade",
     arcade: { debug: false }
   },
-     scene: [BootScene, TitleScene, ProfileScene, CreatePlayerScene, DraftScene, GameScene, ShopScene]
+     scene: [BootScene, TitleScene, ProfileScene, CreatePlayerScene, DraftScene, MainMenuScene, GameScene, ShopScene]
 
 };
 
